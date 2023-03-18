@@ -51,6 +51,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Grabs the next identifier, or errors if not found
+    /// 下一个token必须是ident,如果不是就返回err
     fn next_ident(&mut self) -> Result<String> {
         match self.next()? {
             Token::Ident(ident) => Ok(ident),
@@ -136,16 +137,20 @@ impl<'a> Parser<'a> {
     /// Parses a CREATE TABLE DDL statement. The CREATE TABLE prefix has
     /// already been consumed.
     fn parse_ddl_create_table(&mut self) -> Result<ast::Statement> {
+        // get table name
         let name = self.next_ident()?;
+        // get "("
         self.next_expect(Some(Token::OpenParen))?;
-
+        // get table columns meta data
         let mut columns = Vec::new();
         loop {
             columns.push(self.parse_ddl_columnspec()?);
+            // if next is not "," break;
             if self.next_if_token(Token::Comma).is_none() {
                 break;
             }
         }
+        // expect )
         self.next_expect(Some(Token::CloseParen))?;
         Ok(ast::Statement::CreateTable { name, columns })
     }
@@ -159,7 +164,9 @@ impl<'a> Parser<'a> {
     /// Parses a column specification
     fn parse_ddl_columnspec(&mut self) -> Result<ast::Column> {
         let mut column = ast::Column {
+            // get column name
             name: self.next_ident()?,
+            // get column type and build a table column
             datatype: match self.next()? {
                 Token::Keyword(Keyword::Bool) => DataType::Boolean,
                 Token::Keyword(Keyword::Boolean) => DataType::Boolean,
@@ -234,14 +241,21 @@ impl<'a> Parser<'a> {
 
     /// Parses an insert statement
     fn parse_statement_insert(&mut self) -> Result<ast::Statement> {
+        // 首先是 insert into 开头
         self.next_expect(Some(Keyword::Insert.into()))?;
         self.next_expect(Some(Keyword::Into.into()))?;
         let table = self.next_ident()?;
 
+        // column
+        // insert into table (c1,c2,c3)
+        // 如果有 ( 就是指定要插入的column
         let columns = if self.next_if_token(Token::OpenParen).is_some() {
             let mut cols = Vec::new();
             loop {
                 cols.push(self.next_ident()?.to_string());
+                // 如果接下来是 ) 就说明column结束
+                // 如果是 , 就说明还有 继续
+                // 如果是其他的就错误
                 match self.next()? {
                     Token::CloseParen => break,
                     Token::Comma => {}
@@ -253,8 +267,16 @@ impl<'a> Parser<'a> {
             None
         };
 
+        // insert into (c1,c2) values
+        // 接下来必须是values
         self.next_expect(Some(Keyword::Values.into()))?;
+        // 解析需要插入的值
         let mut values = Vec::new();
+        // INSERT INTO movies VALUES
+        /* (1,  'Stalker',             1, 1, 1979, 8.2),
+        (2,  'Sicario',             2, 2, 2015, 7.6),
+        (12, 'Eternal Sunshine of the Spotless Mind', 5, 3, 2004, 8.3); */
+        // 循环查看有多个（）包裹，由逗号分割
         loop {
             self.next_expect(Some(Token::OpenParen))?;
             let mut exprs = Vec::new();
@@ -267,23 +289,26 @@ impl<'a> Parser<'a> {
                 }
             }
             values.push(exprs);
+            // 如果最后不是, 就是结束了
             if self.next_if_token(Token::Comma).is_none() {
                 break;
             }
         }
-
+        // 返回插入的table columns values
         Ok(ast::Statement::Insert { table, columns, values })
     }
 
     /// Parses a select statement
     fn parse_statement_select(&mut self) -> Result<ast::Statement> {
         Ok(ast::Statement::Select {
+            // 解析 select ... 解析要查询的字段
             select: self.parse_clause_select()?,
             from: self.parse_clause_from()?,
             r#where: self.parse_clause_where()?,
             group_by: self.parse_clause_group_by()?,
             having: self.parse_clause_having()?,
             order: self.parse_clause_order()?,
+            // TODO: 可以使用limit 1,2
             limit: if self.next_if_token(Keyword::Limit.into()).is_some() {
                 Some(self.parse_expression(0)?)
             } else {
@@ -299,15 +324,20 @@ impl<'a> Parser<'a> {
 
     /// Parses an update statement
     fn parse_statement_update(&mut self) -> Result<ast::Statement> {
+        // get "update table_name set "
         self.next_expect(Some(Keyword::Update.into()))?;
         let table = self.next_ident()?;
         self.next_expect(Some(Keyword::Set.into()))?;
 
+        // update values
         let mut set = BTreeMap::new();
         loop {
             let column = self.next_ident()?;
+            // 必须是=
             self.next_expect(Some(Token::Equal))?;
+            // 解析表达式
             let expr = self.parse_expression(0)?;
+            // 做了一个小判断
             if set.contains_key(&column) {
                 return Err(Error::Value(format!("Duplicate values given for column {}", column)));
             }
@@ -317,6 +347,7 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // 如果有where关键字，解析后面的表达式
         Ok(ast::Statement::Update { table, set, r#where: self.parse_clause_where()? })
     }
 
@@ -359,25 +390,41 @@ impl<'a> Parser<'a> {
     /// Parses a from clause
     fn parse_clause_from(&mut self) -> Result<Vec<ast::FromItem>> {
         let mut from = Vec::new();
+        // 没有from就返回
         if self.next_if_token(Keyword::From.into()).is_none() {
             return Ok(from);
         }
+        // SELECT m.id, m.title, g.name FROM movies m JOIN genres g ON m.genre_id = g.id;
+        // 逗号分割 组成 vec<FromItem>
+        // 如果 没有join 那么就是FromItem::Table
+        // 如果有join 那么就就是FromItem::Join 是一个嵌套类型
         loop {
+            // 首先肯定都是table 先解析出来第一个table 包括别名
             let mut item = self.parse_clause_from_item()?;
+            // 解析join tpye
             while let Some(jointype) = self.parse_clause_from_jointype()? {
                 let left = Box::new(item);
+
+                // 解析出来下一个table 
                 let right = Box::new(self.parse_clause_from_item()?);
+
                 let predicate = match &jointype {
+                    // 只有cross 笛卡尔积没有on
                     ast::JoinType::Cross => None,
                     _ => {
-                        self.next_expect(Some(Keyword::On.into()))?;
+                        // 如果木有on字段就返回None 
+                        let _ = self.next_expect(Some(Keyword::On.into()))?;
+                        // 如果有 就继续解析表达式
                         Some(self.parse_expression(0)?)
                     }
                 };
                 let r#type = jointype;
+                // 把item替换成join后的
+                // fromTable 是一个嵌套类型
                 item = ast::FromItem::Join { left, right, r#type, predicate };
             }
             from.push(item);
+            // 如果下一个不是 逗号就继续 否则就break结束fromd的解析
             if self.next_if_token(Token::Comma).is_none() {
                 break;
             }
@@ -403,6 +450,7 @@ impl<'a> Parser<'a> {
         Ok(ast::FromItem::Table { name, alias })
     }
 
+    // 判断是否连接 inner join left join right join cross（笛卡尔积） 
     // Parses a from clause join type
     fn parse_clause_from_jointype(&mut self) -> Result<Option<ast::JoinType>> {
         if self.next_if_token(Keyword::Cross.into()).is_some() {
@@ -429,11 +477,14 @@ impl<'a> Parser<'a> {
     /// Parses a group by clause
     fn parse_clause_group_by(&mut self) -> Result<Vec<ast::Expression>> {
         let mut exprs = Vec::new();
+        // 首先要有group by 没有就返回
         if self.next_if_token(Keyword::Group.into()).is_none() {
             return Ok(exprs);
         }
         self.next_expect(Some(Keyword::By.into()))?;
+        // 解析group_by 字段 以逗号分割， 没有就结束了
         loop {
+            //记得push进去 cloumn解析
             exprs.push(self.parse_expression(0)?);
             if self.next_if_token(Token::Comma).is_none() {
                 break;
@@ -442,7 +493,8 @@ impl<'a> Parser<'a> {
         Ok(exprs)
     }
 
-    /// Parses a HAVING clause
+    /// Parses a HAVING clause 
+    // 解析having 用group_by 的时候
     fn parse_clause_having(&mut self) -> Result<Option<ast::Expression>> {
         if self.next_if_token(Keyword::Having.into()).is_none() {
             return Ok(None);
@@ -450,12 +502,14 @@ impl<'a> Parser<'a> {
         Ok(Some(self.parse_expression(0)?))
     }
 
+    // 解析 order 
     /// Parses an order clause
     fn parse_clause_order(&mut self) -> Result<Vec<(ast::Expression, ast::Order)>> {
         if self.next_if_token(Keyword::Order.into()).is_none() {
             return Ok(Vec::new());
         }
         self.next_expect(Some(Keyword::By.into()))?;
+        // 返回元组数组
         let mut orders = Vec::new();
         loop {
             orders.push((
@@ -482,18 +536,23 @@ impl<'a> Parser<'a> {
             return Ok(select);
         }
         loop {
+            // 如果上来就是 select * , 并且 select 数组是空 直接返回
             if self.next_if_token(Token::Asterisk).is_some() && select.is_empty() {
                 break;
             }
+            // 解析表达式
             let expr = self.parse_expression(0)?;
             let label = match self.peek()? {
+                // 看看是否有别名
                 Some(Token::Keyword(Keyword::As)) => {
                     self.next()?;
                     Some(self.next_ident()?)
                 }
+                // 不用as 空格简写也可以
                 Some(Token::Ident(_)) => Some(self.next_ident()?),
                 _ => None,
             };
+            // 放进去
             select.push((expr, label));
             if self.next_if_token(Token::Comma).is_none() {
                 break;
@@ -504,15 +563,18 @@ impl<'a> Parser<'a> {
 
     /// Parses a WHERE clause
     fn parse_clause_where(&mut self) -> Result<Option<ast::Expression>> {
+        // 如果没有where就结束了 返回 Ok(None)
         if self.next_if_token(Keyword::Where.into()).is_none() {
             return Ok(None);
         }
+        // 有的话就进行解析
         Ok(Some(self.parse_expression(0)?))
     }
 
     /// Parses an expression consisting of at least one atom operated on by any
     /// number of operators, using the precedence climbing algorithm.
     fn parse_expression(&mut self, min_prec: u8) -> Result<ast::Expression> {
+        // 查看是否有前缀运算符 例如正号 + 负号 - 以及 NOT
         let mut lhs = if let Some(prefix) = self.next_if_operator::<PrefixOperator>(min_prec)? {
             prefix.build(self.parse_expression(prefix.prec() + prefix.assoc())?)
         } else {
@@ -530,10 +592,13 @@ impl<'a> Parser<'a> {
     /// Parses an expression atom
     fn parse_expression_atom(&mut self) -> Result<ast::Expression> {
         Ok(match self.next()? {
+            // 如果是ident 那么一般就是字段 比如 select name, age from student 这里的name和age. 或者是函数 比如 sum
             Token::Ident(i) => {
+                // 如果带括号就是函数
                 if self.next_if_token(Token::OpenParen).is_some() {
                     let mut args = Vec::new();
                     while self.next_if_token(Token::CloseParen).is_none() {
+                        // 解析arg 每个arg要 , 分割
                         if !args.is_empty() {
                             self.next_expect(Some(Token::Comma))?;
                         }
@@ -548,6 +613,7 @@ impl<'a> Parser<'a> {
                 } else {
                     let mut relation = None;
                     let mut field = i;
+                    // 如果是 . 说明是 表.列名
                     if self.next_if_token(Token::Period).is_some() {
                         relation = Some(field);
                         field = self.next_ident()?;
@@ -578,20 +644,29 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// 下面就是operation 分成前缀和后缀 以及中缀
+
 /// An operator trait, to help with parsing of operators
 trait Operator: Sized {
     /// Looks up the corresponding operator for a token, if one exists
+    /// 从Token转化成一个Operator
     fn from(token: &Token) -> Option<Self>;
     /// Augments an operator by allowing it to parse any modifiers.
+    /// 允许通过解析其他修饰符来加强操作
+    /// 只是用在Is Null, Is Not Null 上面，这种后缀操作，其他都是直接返回本身
     fn augment(self, parser: &mut Parser) -> Result<Self>;
     /// Returns the operator's associativity
+    /// 返回左右粘性
     fn assoc(&self) -> u8;
     /// Returns the operator's precedence
+    /// 返回级别
     fn prec(&self) -> u8;
 }
 
 const ASSOC_LEFT: u8 = 1;
 const ASSOC_RIGHT: u8 = 0;
+
+/// 每个Operator 都有自己的build 返回Express
 
 /// Prefix operators
 enum PrefixOperator {
@@ -599,6 +674,7 @@ enum PrefixOperator {
     Not,
     Plus,
 }
+
 
 impl PrefixOperator {
     fn build(&self, rhs: ast::Expression) -> ast::Expression {
@@ -725,13 +801,13 @@ impl Operator for InfixOperator {
     }
 }
 
+// 后缀操作 阶乘
 enum PostfixOperator {
+    // ！
     Factorial,
     // FIXME Compiler bug? Why is this considered dead code?
-    #[allow(dead_code)]
-    IsNull {
-        not: bool,
-    },
+    //#[allow(dead_code)]
+    IsNull { not: bool },
 }
 
 impl PostfixOperator {

@@ -27,6 +27,7 @@ impl<'a, C: Catalog> Planner<'a, C> {
     fn build_statement(&self, statement: ast::Statement) -> Result<Node> {
         Ok(match statement {
             // Transaction control and explain statements should have been handled by session.
+            // 事务控制和 explain statements 应该由session去处理
             ast::Statement::Begin { .. } | ast::Statement::Commit | ast::Statement::Rollback => {
                 return Err(Error::Internal(format!(
                     "Unexpected transaction statement {:?}",
@@ -47,6 +48,7 @@ impl<'a, C: Catalog> Planner<'a, C> {
                         .map(|c| {
                             let nullable = c.nullable.unwrap_or(!c.primary_key);
                             let default = match c.default {
+                                // 计算常量例如 1+3 default 只支持常量
                                 Some(expr) => Some(self.evaluate_constant(expr)?),
                                 None if nullable => Some(Value::Null),
                                 None => None,
@@ -96,13 +98,14 @@ impl<'a, C: Catalog> Planner<'a, C> {
             },
 
             ast::Statement::Update { table, set, r#where } => {
+                let r = r#where;
                 let scope = &mut Scope::from_table(self.catalog.must_read_table(&table)?)?;
                 Node::Update {
                     table: table.clone(),
                     source: Box::new(Node::Scan {
                         table,
                         alias: None,
-                        filter: r#where.map(|e| self.build_expression(scope, e)).transpose()?,
+                        filter: r.map(|e| self.build_expression(scope, e)).transpose()?,
                     }),
                     expressions: set
                         .into_iter()
@@ -131,11 +134,13 @@ impl<'a, C: Catalog> Planner<'a, C> {
                 let scope = &mut Scope::new();
 
                 // Build FROM clause.
-                let mut node = if !from.is_empty() {
+                let mut node = 
+                    if !from.is_empty() {
                     self.build_from_clause(scope, from)?
                 } else if select.is_empty() {
                     return Err(Error::Value("Can't select * without a table".into()));
                 } else {
+                    //select 1+2; 这种
                     Node::Nothing
                 };
 
@@ -150,6 +155,9 @@ impl<'a, C: Catalog> Planner<'a, C> {
                 // Build SELECT clause.
                 let mut hidden = 0;
                 if !select.is_empty() {
+                    // 映射隐藏column 有些column在having,orderby出现，但是没有出现于selec columns
+                    // 就会先加入到select数组中 并且需要知道hiden几个
+                    // 那么他们将会在之后的投影中删除
                     // Inject hidden SELECT columns for fields and aggregates used in ORDER BY and
                     // HAVING expressions but not present in existing SELECT output. These will be
                     // removed again by a later projection.
@@ -176,7 +184,10 @@ impl<'a, C: Catalog> Planner<'a, C> {
                     // - Aggregation: max(#0), min(#1) group by #2
                     // - Projection: (#0 - #1) / 100
                     let aggregates = self.extract_aggregates(&mut select)?;
+                    // 出来之后select中column都是被function替换的
+                    // function(column(index))都已经进入aggregates
                     let groups = self.extract_groups(&mut select, group_by, aggregates.len())?;
+
                     if !aggregates.is_empty() || !groups.is_empty() {
                         node = self.build_aggregation(scope, node, groups, aggregates)?;
                     }
@@ -258,6 +269,7 @@ impl<'a, C: Catalog> Planner<'a, C> {
     /// join of an arbitrary number of tables. All of the items are joined, since e.g. 'SELECT * FROM
     /// a, b' is an implicit join of a and b.
     fn build_from_clause(&self, scope: &mut Scope, from: Vec<ast::FromItem>) -> Result<Node> {
+        
         let base_scope = scope.clone();
         let mut items = from.into_iter();
         let mut node = match items.next() {
@@ -286,6 +298,9 @@ impl<'a, C: Catalog> Planner<'a, C> {
     fn build_from_item(&self, scope: &mut Scope, item: ast::FromItem) -> Result<Node> {
         Ok(match item {
             ast::FromItem::Table { name, alias } => {
+                // 解析到底层就是解析入table
+                // 注意这里加入到scope都是全限定列名，每个列名都有自己的前缀表
+                // table可以加入自己的别名
                 scope.add_table(
                     alias.clone().unwrap_or_else(|| name.clone()),
                     self.catalog.must_read_table(&name)?,
@@ -308,12 +323,16 @@ impl<'a, C: Catalog> Planner<'a, C> {
                     ast::JoinType::Cross | ast::JoinType::Inner => false,
                     ast::JoinType::Left | ast::JoinType::Right => true,
                 };
+
                 let mut node = Node::NestedLoopJoin { left, left_size, right, predicate, outer };
                 if matches!(r#type, ast::JoinType::Right) {
                     let expressions = (left_size..scope.len())
                         .chain(0..left_size)
+                        // 左右连接的时候没有列别名，直接传none
                         .map(|i| Ok((Expression::Field(i, scope.get_label(i)?), None)))
                         .collect::<Result<Vec<_>>>()?;
+                    // scope中的columns 按照expressions进行排列 把右边的移到前面去了
+                    // 当然这个方法是建立一个投影 只不过也能完成上面我们想要的效果
                     scope.project(&expressions)?;
                     node = Node::Projection { source: Box::new(node), expressions }
                 }
@@ -375,8 +394,13 @@ impl<'a, C: Catalog> Planner<'a, C> {
         for (expr, _) in exprs {
             expr.transform_mut(
                 &mut |mut e| match &mut e {
+                    // expr是function的话
                     ast::Expression::Function(f, args) if args.len() == 1 => {
+                        // 查看是否有这个函数支持
                         if let Some(aggregate) = self.aggregate_from_name(f) {
+                            // 把function 替换 -> column(index) 
+                            // 这里的index和刚刚inject_hidden不同，这里的index就指的是aggregates中的index
+                            // 所有的function都会替换成Column(index)  包括刚刚inject_hidden中的
                             aggregates.push((aggregate, args.remove(0)));
                             Ok(ast::Expression::Column(aggregates.len() - 1))
                         } else {
@@ -454,10 +478,15 @@ impl<'a, C: Catalog> Planner<'a, C> {
     ) -> Result<usize> {
         // Replace any identical expressions or label references with column references.
         for (i, (sexpr, label)) in select.iter().enumerate() {
+            // 如果一致，就把expr 改成对应select中的映射 
+            // select name ... order name
+            // 这里就只需要expr记住你之后找第几个映射结果就好了 
             if expr == sexpr {
                 *expr = ast::Expression::Column(i);
                 continue;
             }
+
+            // 就是看一下会不会别名是一样的 select name n .... order n
             if let Some(label) = label {
                 expr.transform_mut(
                     &mut |e| match e {
@@ -475,8 +504,16 @@ impl<'a, C: Catalog> Planner<'a, C> {
         let mut hidden = 0;
         expr.transform_mut(
             &mut |e| match &e {
+                // 如果是 function 那么还需要看一下是否存在
                 ast::Expression::Function(f, a) if self.aggregate_from_name(f).is_some() => {
+                    // 如果存在 并且参数是Column() 这里已经被上面递归替换掉了
+                    // 这里只实现了基本的sum count .. 操作 只有一个传参 所以只判断一个就好了
                     if let ast::Expression::Column(c) = a[0] {
+                        // 如果这个column也是一个聚合函数 就拒绝，聚合函数不能再聚合聚合函数
+                        // 例如
+                        // count(name) count_name ... having sum(count_name) > 10
+                        // 但是这样是可以的
+                        // age .... having sum(age) > 10
                         if self.is_aggregate(&select[c].0) {
                             return Err(Error::Value(
                                 "Aggregate function cannot reference aggregate".into(),
@@ -487,7 +524,11 @@ impl<'a, C: Catalog> Planner<'a, C> {
                     hidden += 1;
                     Ok(ast::Expression::Column(select.len() - 1))
                 }
+                // 这里说一下 这里依然是递归替换 如果是function(fun_name,arg) 那么首先column会被替换掉
+                // 也就是说function(fun_name,arg) 首先会被替换成function(fun_name,Column(index))
+                // 之后才会进入上面的 function 中的替换
                 ast::Expression::Field(_, _) => {
+                    // 如果是filed并且和select没有重合的地方，那么就加入到select中
                     select.push((e, None));
                     hidden += 1;
                     Ok(ast::Expression::Column(select.len() - 1))
@@ -496,6 +537,7 @@ impl<'a, C: Catalog> Planner<'a, C> {
             },
             &mut |e| Ok(e),
         )?;
+        // 也就是说后面hidden个都不是sql语句想要展示出来的，之后需要抛弃
         Ok(hidden)
     }
 
@@ -520,9 +562,11 @@ impl<'a, C: Catalog> Planner<'a, C> {
     }
 
     /// Builds an expression from an AST expression
+    /// 从ast表达式中构建表达式 把 ast expression => planner expression
     fn build_expression(&self, scope: &mut Scope, expr: ast::Expression) -> Result<Expression> {
         use Expression::*;
         Ok(match expr {
+            // 一些数值量就变成Value
             ast::Expression::Literal(l) => Constant(match l {
                 ast::Literal::Null => Value::Null,
                 ast::Literal::Boolean(b) => Value::Boolean(b),
@@ -632,25 +676,33 @@ impl<'a, C: Catalog> Planner<'a, C> {
     }
 
     /// Builds and evaluates a constant AST expression.
+    /// 构建并评估常量 ast 表达式
     fn evaluate_constant(&self, expr: ast::Expression) -> Result<Value> {
         self.build_expression(&mut Scope::constant(), expr)?.evaluate(None)
     }
 }
 
 /// Manages names available to expressions and executors, and maps them onto columns/fields.
+/// 作用域 保存当前作用域下的columns和fiedls元信息
 #[derive(Clone, Debug)]
 pub struct Scope {
     // If true, the scope is constant and cannot contain any variables.
+    // true 范围就是常量，不包含其他表达式
     constant: bool,
     // Currently visible tables, by query name (i.e. alias or actual name).
+    // 放入已知的table
     tables: HashMap<String, Table>,
     // Column labels, if any (qualified by table name when available)
+    // 放入已经知道的column
     columns: Vec<(Option<String>, Option<String>)>,
     // Qualified names to column indexes.
+    // 给columns加一个索引 key = (table_name, column_name) val = 上面columns中column所在的index
     qualified: HashMap<(String, String), usize>,
     // Unqualified names to column indexes, if unique.
+    //  非限定列名放入的位置
     unqualified: HashMap<String, usize>,
     // Unqialified ambiguous names.
+    // key 是 非限定列名 column 存储多次就会放这里，
     ambiguous: HashSet<String>,
 }
 
@@ -688,6 +740,7 @@ impl Scope {
             if let Some(t) = table.clone() {
                 self.qualified.insert((t, l.clone()), self.columns.len());
             }
+            // 不管有没有全限定列名都会放进去，因为比如 stu.name name这两个列其实会有歧义的
             if !self.ambiguous.contains(&l) {
                 if !self.unqualified.contains_key(&l) {
                     self.unqualified.insert(l, self.columns.len());
@@ -755,6 +808,7 @@ impl Scope {
     }
 
     /// Resolves a name, optionally qualified by a table name.
+    /// 查找这个字段列名所在的index scope.column
     fn resolve(&self, table: Option<&str>, name: &str) -> Result<usize> {
         if self.constant {
             return Err(Error::Value(format!(
@@ -762,6 +816,7 @@ impl Scope {
                 if let Some(table) = table { format!("{}.{}", table, name) } else { name.into() }
             )));
         }
+
         if let Some(table) = table {
             if !self.tables.contains_key(table) {
                 return Err(Error::Value(format!("Unknown table {}", table)));
@@ -770,9 +825,12 @@ impl Scope {
                 .get(&(table.into(), name.into()))
                 .copied()
                 .ok_or_else(|| Error::Value(format!("Unknown field {}.{}", table, name)))
+
         } else if self.ambiguous.contains(name) {
+            // 如果全限定列名找不到，并且这个列名在ambiguous中就有问题了
             Err(Error::Value(format!("Ambiguous field {}", name)))
         } else {
+            // 虽然没有表名称做前缀，但是因为没有冲突，所以不会产生歧义
             self.unqualified
                 .get(name)
                 .copied()
@@ -787,6 +845,7 @@ impl Scope {
 
     /// Projects the scope. This takes a set of expressions and labels in the current scope,
     /// and returns a new scope for the projection.
+    /// 第一个表示表达式，第二个表示别名
     fn project(&mut self, projection: &[(Expression, Option<String>)]) -> Result<()> {
         if self.constant {
             return Err(Error::Internal("Can't modify constant scope".into()));

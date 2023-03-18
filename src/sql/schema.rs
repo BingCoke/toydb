@@ -18,6 +18,7 @@ pub trait Catalog {
     fn scan_tables(&self) -> Result<Tables>;
 
     /// Reads a table, and errors if it does not exist
+    /// 找到一个table 如果没有就返回错误
     fn must_read_table(&self, table: &str) -> Result<Table> {
         self.read_table(table)?
             .ok_or_else(|| Error::Value(format!("Table {} does not exist", table)))

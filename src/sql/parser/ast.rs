@@ -97,7 +97,8 @@ pub enum Order {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expression {
     Field(Option<String>, String),
-    Column(usize), // only used during plan building to break off expression subtrees
+    Column(usize), // only used during plan building to break off expression subtrees //
+                   // 用于构建plan的时候中断表达式子树
     Literal(Literal),
     Function(String, Vec<Expression>),
     Operation(Operation),
@@ -174,6 +175,7 @@ impl Expression {
     }
 
     /// Transforms the expression tree by applying a closure before and after descending.
+    /// 递归替换 某个expression可能会在before中被替换
     pub fn transform<B, A>(mut self, before: &mut B, after: &mut A) -> Result<Self>
     where
         B: FnMut(Self) -> Result<Self>,

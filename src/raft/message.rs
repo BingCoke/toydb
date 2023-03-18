@@ -40,6 +40,7 @@ pub enum Event {
         commit_term: u64,
     },
     /// Followers confirm loyalty to leader after heartbeats.
+    /// followers 在心跳之后确认对 leader 的忠诚度
     ConfirmLeader {
         /// The commit_index of the original leader heartbeat, to confirm
         /// read requests.

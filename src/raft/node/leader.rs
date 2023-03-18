@@ -105,6 +105,7 @@ impl RoleNode<Leader> {
             return Ok(self.into());
         }
         if msg.term > self.term {
+            // 如果msg term 大于我的，我就转换成Follower
             if let Address::Peer(from) = &msg.from {
                 return self.become_follower(msg.term, from)?.step(msg);
             }

@@ -10,25 +10,45 @@ pub enum Token {
     String(String),
     Ident(String),
     Keyword(Keyword),
+    // .
     Period,
+    // =
     Equal,
+    // >
     GreaterThan,
+    // >=
     GreaterThanOrEqual,
+    // <
     LessThan,
+    // <=
     LessThanOrEqual,
+    // <>
     LessOrGreaterThan,
+    // +
     Plus,
+    // -
     Minus,
+    // *
     Asterisk,
+    // /
     Slash,
+    // ^
     Caret,
+    // %
     Percent,
+    // !
     Exclamation,
+    // !=
     NotEqual,
+    // ?
     Question,
+    // (
     OpenParen,
+    // )
     CloseParen,
+    // ,
     Comma,
+    // ;
     Semicolon,
 }
 

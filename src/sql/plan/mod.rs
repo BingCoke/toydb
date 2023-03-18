@@ -110,6 +110,7 @@ pub enum Node {
         source: Box<Node>,
         orders: Vec<(Expression, Direction)>,
     },
+    /// 投影
     Projection {
         source: Box<Node>,
         expressions: Vec<(Expression, Option<String>)>,
@@ -122,6 +123,7 @@ pub enum Node {
     Update {
         table: String,
         source: Box<Node>,
+        // (index,column_name) expression
         expressions: Vec<(usize, Option<String>, Expression)>,
     },
 }
@@ -422,6 +424,7 @@ impl Display for Node {
 }
 
 /// An aggregate operation
+/// 聚合操作
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum Aggregate {
     Average,

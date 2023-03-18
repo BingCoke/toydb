@@ -124,6 +124,10 @@ impl Session {
 
     /// Handles a client connection.
     async fn handle(mut self, socket: TcpStream) -> Result<()> {
+        /* Framed结构体是将字节流转换为高级对象流的方便方法。它有两个参数：底层流和编解码器，用于序列化和反序列化在流中发送的对象。
+        在这种情况下，底层流使用Framed::new函数创建，它需要一个socket（可能是TCP或UDP套接字）和一个LengthDelimitedCodec。
+        LengthDelimitedCodec是由tokio_util库提供的编解码器，它通过在每个对象的前面添加其字节长度来对数据进行帧处理。
+        然后使用tokio_serde::formats::Bincode编解码器对对象进行序列化和反序列化。Bincode是用于Rust值的二进制序列化格式，既快速又高效。 */
         let mut stream = tokio_serde::Framed::new(
             Framed::new(socket, LengthDelimitedCodec::new()),
             tokio_serde::formats::Bincode::default(),
@@ -132,11 +136,11 @@ impl Session {
             let mut response = tokio::task::block_in_place(|| self.request(request));
             let mut rows: Box<dyn Iterator<Item = Result<Response>> + Send> =
                 Box::new(std::iter::empty());
-            if let Ok(Response::Execute(ResultSet::Query { rows: ref mut resultrows, .. })) =
-                &mut response
+            if let Ok(Response::Execute(ResultSet::Query { rows: resultrows, .. })) = &mut response
             {
                 rows = Box::new(
                     std::mem::replace(resultrows, Box::new(std::iter::empty()))
+                    //resultrows
                         .map(|result| result.map(|row| Response::Row(Some(row))))
                         .chain(std::iter::once(Ok(Response::Row(None))))
                         .scan(false, |err_sent, response| match (&err_sent, &response) {
@@ -151,7 +155,7 @@ impl Session {
                 );
             }
             stream.send(response).await?;
-            stream.send_all(&mut tokio_stream::iter(rows.map(Ok))).await?;
+            stream.send_all(&mut tokio_stream::iter(rows.map(|v|Ok(v)))).await?;
         }
         Ok(())
     }

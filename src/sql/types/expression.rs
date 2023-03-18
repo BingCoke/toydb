@@ -11,6 +11,7 @@ use std::mem::replace;
 pub enum Expression {
     // Values
     Constant(Value),
+    // 0 scope 中 columns index ， 1 表名+列名
     Field(usize, Option<(Option<String>, String)>),
 
     // Logical operations

@@ -212,6 +212,7 @@ impl Node {
             Self::Filter { source, predicate } => {
                 Self::Filter { source, predicate: predicate.transform(before, after)? }
             }
+
             Self::Insert { table, columns, expressions } => Self::Insert {
                 table,
                 columns,
@@ -220,6 +221,7 @@ impl Node {
                     .map(|exprs| exprs.into_iter().map(|e| e.transform(before, after)).collect())
                     .collect::<Result<_>>()?,
             },
+
             Self::Order { source, orders } => Self::Order {
                 source,
                 orders: orders
@@ -227,6 +229,7 @@ impl Node {
                     .map(|(e, o)| e.transform(before, after).map(|e| (e, o)))
                     .collect::<Result<_>>()?,
             },
+
             Self::NestedLoopJoin { left, left_size, right, predicate: Some(predicate), outer } => {
                 Self::NestedLoopJoin {
                     left,
@@ -236,6 +239,7 @@ impl Node {
                     outer,
                 }
             }
+
             Self::Projection { source, expressions } => Self::Projection {
                 source,
                 expressions: expressions
@@ -243,9 +247,11 @@ impl Node {
                     .map(|(e, l)| Ok((e.transform(before, after)?, l)))
                     .collect::<Result<_>>()?,
             },
+
             Self::Scan { table, alias, filter: Some(filter) } => {
                 Self::Scan { table, alias, filter: Some(filter.transform(before, after)?) }
             }
+
             Self::Update { table, source, expressions } => Self::Update {
                 table,
                 source,

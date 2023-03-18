@@ -334,13 +334,16 @@ impl raft::State for State {
             Query::Read { txn_id, table, id } => {
                 Raft::serialize(&self.engine.resume(txn_id)?.read(&table, &id)?)
             }
+
             Query::ReadIndex { txn_id, table, column, value } => {
                 Raft::serialize(&self.engine.resume(txn_id)?.read_index(&table, &column, &value)?)
             }
+
             // FIXME These need to stream rows somehow
             Query::Scan { txn_id, table, filter } => Raft::serialize(
                 &self.engine.resume(txn_id)?.scan(&table, filter)?.collect::<Result<Vec<_>>>()?,
             ),
+
             Query::ScanIndex { txn_id, table, column } => Raft::serialize(
                 &self
                     .engine
@@ -348,11 +351,13 @@ impl raft::State for State {
                     .scan_index(&table, &column)?
                     .collect::<Result<Vec<_>>>()?,
             ),
+
             Query::Status => Raft::serialize(&self.engine.kv.status()?),
 
             Query::ReadTable { txn_id, table } => {
                 Raft::serialize(&self.engine.resume(txn_id)?.read_table(&table)?)
             }
+
             Query::ScanTables { txn_id } => {
                 Raft::serialize(&self.engine.resume(txn_id)?.scan_tables()?.collect::<Vec<_>>())
             }

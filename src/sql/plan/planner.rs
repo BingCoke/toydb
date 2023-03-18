@@ -140,7 +140,7 @@ impl<'a, C: Catalog> Planner<'a, C> {
                 } else if select.is_empty() {
                     return Err(Error::Value("Can't select * without a table".into()));
                 } else {
-                    //select 1+2; 这种
+                    //select 1+2; 这种就没有from
                     Node::Nothing
                 };
 
@@ -189,6 +189,7 @@ impl<'a, C: Catalog> Planner<'a, C> {
                     let groups = self.extract_groups(&mut select, group_by, aggregates.len())?;
 
                     if !aggregates.is_empty() || !groups.is_empty() {
+                        // 聚合 或者 group 只要有一个就进入
                         node = self.build_aggregation(scope, node, groups, aggregates)?;
                     }
 
@@ -360,6 +361,7 @@ impl<'a, C: Catalog> Planner<'a, C> {
         for (expr, label) in groups {
             expressions.push((self.build_expression(scope, expr)?, label));
         }
+        // 做出映射，只有groupby做投影，聚合操作不管
         scope.project(
             &expressions
                 .iter()
@@ -434,8 +436,10 @@ impl<'a, C: Catalog> Planner<'a, C> {
         offset: usize,
     ) -> Result<Vec<(ast::Expression, Option<String>)>> {
         let mut groups = Vec::new();
+        // 看一下group_by 的字段 有没有可以利用select的
         for g in group_by {
             // Look for references to SELECT columns with AS labels
+            // 看看字段
             if let ast::Expression::Field(None, label) = &g {
                 if let Some(i) = exprs.iter().position(|(_, l)| l.as_deref() == Some(label)) {
                     groups.push((
@@ -445,6 +449,8 @@ impl<'a, C: Catalog> Planner<'a, C> {
                     continue;
                 }
             }
+            // 看看有没有表达式一样的 例如
+            // SELECT released / 100, COUNT(*) FROM movies GROUP BY released / 100
             // Look for expressions exactly equal to the group expression
             if let Some(i) = exprs.iter().position(|(e, _)| e == &g) {
                 groups.push((
@@ -454,10 +460,16 @@ impl<'a, C: Catalog> Planner<'a, C> {
                 continue;
             }
             // Otherwise, just use the group expression directly
+            // 否则的话就直接加入groups
             groups.push((g, None))
         }
+        // 到此为止 select 能被 groupby利用的都被替换成Column(index)这里的index是指
+        // function_size + gourp_index
+        // groups 中存留select原始的exprs, 如果没有能利用select的就直接放入了，并且没有lable
+
         // Make sure no group expressions contain Column references, which would be placed here
         // during extract_aggregates().
+        // 确保group 字段中没有聚合操作 group by sum(name) 是不被允许的
         for (expr, _) in &groups {
             if self.is_aggregate(expr) {
                 return Err(Error::Value("Group expression cannot contain aggregates".into()));
@@ -579,6 +591,7 @@ impl<'a, C: Catalog> Planner<'a, C> {
                 Field(scope.resolve(table.as_deref(), &name)?, Some((table, name)))
             }
             ast::Expression::Function(name, _) => {
+                // 这个地方不应该被调用，因为会在之前被替换成Column
                 return Err(Error::Value(format!("Unknown function {}", name,)))
             }
             ast::Expression::Operation(op) => match op {

@@ -12,6 +12,7 @@ pub trait Optimizer {
 
 /// A constant folding optimizer, which replaces constant expressions with their evaluated value, to
 /// prevent it from being re-evaluated over and over again during plan execution.
+/// 计算常量 比如 3+2 这里就会被优化成为 5
 pub struct ConstantFolder;
 
 impl Optimizer for ConstantFolder {
@@ -19,6 +20,8 @@ impl Optimizer for ConstantFolder {
         node.transform(&|n| Ok(n), &|n| {
             n.transform_expressions(
                 &|e| {
+                    // 如果树中有field,那么就不转换了，有就转换
+                    // 感觉可以转，但是需要重写evaluate函数
                     if !e.contains(&|expr| matches!(expr, Expression::Field(_, _))) {
                         Ok(Expression::Constant(e.evaluate(None)?))
                     } else {
@@ -32,6 +35,7 @@ impl Optimizer for ConstantFolder {
 }
 
 /// A filter pushdown optimizer, which moves filter predicates into or closer to the source node.
+/// 过滤下推优化器 将过滤断言 放进或者更靠近sourse node
 pub struct FilterPushdown;
 
 impl Optimizer for FilterPushdown {
@@ -158,6 +162,7 @@ impl FilterPushdown {
 }
 
 /// An index lookup optimizer, which converts table scans to index lookups.
+/// 把全表扫描替换成索引
 pub struct IndexLookup<'a, C: Catalog> {
     catalog: &'a mut C,
 }

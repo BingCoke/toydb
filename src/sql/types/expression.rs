@@ -47,6 +47,7 @@ impl Expression {
         Ok(match self {
             // Constant values
             Self::Constant(c) => c.clone(),
+
             Self::Field(i, _) => row.and_then(|row| row.get(*i).cloned()).unwrap_or(Null),
 
             // Logical operations
@@ -311,6 +312,7 @@ impl Expression {
     }
 
     /// Walks the expression tree, calling a closure for every node. Halts if closure returns false.
+    /// walk 遍历整个树，如果树中对于visitor返回的是false,那么就会终止，否则就会继续
     pub fn walk<F: Fn(&Expression) -> bool>(&self, visitor: &F) -> bool {
         visitor(self)
             && match self {
@@ -332,7 +334,7 @@ impl Expression {
                 | Self::IsNull(expr)
                 | Self::Negate(expr)
                 | Self::Not(expr) => expr.walk(visitor),
-
+                // 如果visiter就是针对这两个，那么就会在最开始进行判断 true 与 任何 都等于本身
                 Self::Constant(_) | Self::Field(_, _) => true,
             }
     }

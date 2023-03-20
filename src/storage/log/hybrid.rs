@@ -68,27 +68,34 @@ impl Hybrid {
     }
 
     /// Builds the index by scanning the log file.
+    /// 从日志文件中构建索引
     fn build_index(file: &File) -> Result<BTreeMap<u64, (u64, u32)>> {
         let filesize = file.metadata()?.len();
         let mut bufreader = BufReader::new(file);
         let mut index = BTreeMap::new();
         let mut sizebuf = [0; 4];
+        // 表示当前指针位置
         let mut pos = 0;
         let mut i = 1;
         while pos < filesize {
+            // 日志长度4字节，读取
             bufreader.read_exact(&mut sizebuf)?;
             pos += 4;
             let size = u32::from_be_bytes(sizebuf);
+            // 第i个日志，i作为k, （日志位置, 日志长度）作为value
             index.insert(i, (pos, size));
             let mut buf = vec![0; size as usize];
+            // read size长度，然后pos向后偏移
             bufreader.read_exact(&mut buf)?;
             pos += size as u64;
+            // 日志count++
             i += 1;
         }
         Ok(index)
     }
 
     /// Loads metadata from a file.
+    /// 加载元数据文件
     fn load_metadata(file: &File) -> Result<HashMap<Vec<u8>, Vec<u8>>> {
         match bincode::deserialize_from(file) {
             Ok(metadata) => Ok(metadata),
@@ -106,6 +113,7 @@ impl Hybrid {
 
 impl Store for Hybrid {
     fn append(&mut self, entry: Vec<u8>) -> Result<u64> {
+        // 将日志append到未提交日志队列中
         self.uncommitted.push_back(entry);
         Ok(self.len())
     }
@@ -167,6 +175,7 @@ impl Store for Hybrid {
         }
     }
 
+    // 返回 已经提交长度 + 未提交长度
     fn len(&self) -> u64 {
         self.index.len() as u64 + self.uncommitted.len() as u64
     }

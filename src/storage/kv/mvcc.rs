@@ -112,18 +112,25 @@ impl Transaction {
     fn begin(store: Arc<RwLock<Box<dyn Store>>>, mode: Mode) -> Result<Self> {
         let mut session = store.write()?;
 
+        // sotre中找到下一个id
         let id = match session.get(&Key::TxnNext.encode())? {
             Some(ref v) => deserialize(v)?,
             None => 1,
-        };
+        }; 
+        // 设置下一个xis
         session.set(&Key::TxnNext.encode(), serialize(&(id + 1))?)?;
+        // 设置当前活跃事务id
         session.set(&Key::TxnActive(id).encode(), serialize(&mode)?)?;
 
         // We always take a new snapshot, even for snapshot transactions, because all transactions
         // increment the transaction ID and we need to properly record currently active transactions
         // for any future snapshot transactions looking at this one.
+        // 进去有讲
         let mut snapshot = Snapshot::take(&mut session, id)?;
+        // 解锁 
         std::mem::drop(session);
+        // 如果mode是snapShot模式 就snapshot改成他的
+        // 但是当前事务id仍然是刚刚拿到的！
         if let Mode::Snapshot { version } = &mode {
             snapshot = Snapshot::restore(&store.read()?, *version)?
         }
@@ -143,6 +150,7 @@ impl Transaction {
             _ => Snapshot::restore(&session, id)?,
         };
         std::mem::drop(session);
+        // 这个就是完全就是旧事务了
         Ok(Self { store, id, mode, snapshot })
     }
 
@@ -193,16 +201,21 @@ impl Transaction {
     }
 
     /// Fetches a key.
+    /// 根据key找到value
+    /// 这里是拿记录的
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         let session = self.store.read()?;
         let mut scan = session
             .scan(Range::from(
+                    // 找到从0开始到等于我的事务id
                 Key::Record(key.into(), 0).encode()..=Key::Record(key.into(), self.id).encode(),
             ))
+            // 从后往前找
             .rev();
         while let Some((k, v)) = scan.next().transpose()? {
             match Key::decode(&k)? {
                 Key::Record(_, version) => {
+                    // 一直找到符合我可见的
                     if self.snapshot.is_visible(version) {
                         return deserialize(&v);
                     }
@@ -214,6 +227,7 @@ impl Transaction {
     }
 
     /// Scans a key range.
+    /// 记录的
     pub fn scan(&self, range: impl RangeBounds<Vec<u8>>) -> Result<super::Scan> {
         let start = match range.start_bound() {
             Bound::Excluded(k) => Bound::Excluded(Key::Record(k.into(), std::u64::MAX).encode()),
@@ -230,6 +244,7 @@ impl Transaction {
     }
 
     /// Scans keys under a given prefix.
+    /// 记录
     pub fn scan_prefix(&self, prefix: &[u8]) -> Result<super::Scan> {
         if prefix.is_empty() {
             return Err(Error::Internal("Scan prefix cannot be empty".into()));
@@ -254,11 +269,13 @@ impl Transaction {
     }
 
     /// Sets a key.
+    /// 记录
     pub fn set(&mut self, key: &[u8], value: Vec<u8>) -> Result<()> {
         self.write(key, Some(value))
     }
 
     /// Writes a value for a key. None is used for deletion.
+    /// 记录
     fn write(&self, key: &[u8], value: Option<Vec<u8>>) -> Result<()> {
         if !self.mode.mutable() {
             return Err(Error::ReadOnly);
@@ -267,9 +284,11 @@ impl Transaction {
 
         // Check if the key is dirty, i.e. if it has any uncommitted changes, by scanning for any
         // versions that aren't visible to us.
+        // 得到当前不可见的事务id最小值 没有就是
         let min = self.snapshot.invisible.iter().min().cloned().unwrap_or(self.id + 1);
         let mut scan = session
             .scan(Range::from(
+                    // 找到记录
                 Key::Record(key.into(), min).encode()
                     ..=Key::Record(key.into(), std::u64::MAX).encode(),
             ))
@@ -346,20 +365,24 @@ impl Snapshot {
     /// Takes a new snapshot, persisting it as `Key::TxnSnapshot(version)`.
     fn take(session: &mut RwLockWriteGuard<Box<dyn Store>>, version: u64) -> Result<Self> {
         let mut snapshot = Self { version, invisible: HashSet::new() };
+        // 找到当前所有的活跃id
         let mut scan =
             session.scan(Range::from(Key::TxnActive(0).encode()..Key::TxnActive(version).encode()));
         while let Some((key, _)) = scan.next().transpose()? {
             match Key::decode(&key)? {
+                // 插入进去
                 Key::TxnActive(id) => snapshot.invisible.insert(id),
                 k => return Err(Error::Internal(format!("Expected TxnActive, got {:?}", k))),
             };
         }
         std::mem::drop(scan);
+        // 保存
         session.set(&Key::TxnSnapshot(version).encode(), serialize(&snapshot.invisible)?)?;
         Ok(snapshot)
     }
 
     /// Restores an existing snapshot from `Key::TxnSnapshot(version)`, or errors if not found.
+    /// 恢复当前活跃的事务id
     fn restore(session: &RwLockReadGuard<Box<dyn Store>>, version: u64) -> Result<Self> {
         match session.get(&Key::TxnSnapshot(version).encode())? {
             Some(ref v) => Ok(Self { version, invisible: deserialize(v)? }),
@@ -369,6 +392,7 @@ impl Snapshot {
 
     /// Checks whether the given version is visible in this snapshot.
     fn is_visible(&self, version: u64) -> bool {
+        // 如果小于当前事务id  或者 set集合中不存在 就是可见的
         version <= self.version && self.invisible.get(&version).is_none()
     }
 }
@@ -384,8 +408,10 @@ enum Key<'a> {
     /// Txn snapshot, containing concurrent active txns at start of txn.
     TxnSnapshot(u64),
     /// Update marker for a txn ID and key, used for rollback.
+    /// 更新 标记 用于rollback
     TxnUpdate(u64, Cow<'a, [u8]>),
     /// A record for a key/version pair.
+    /// 记录的key和version 
     Record(Cow<'a, [u8]>, u64),
     /// Arbitrary unversioned metadata.
     Metadata(Cow<'a, [u8]>),
@@ -446,13 +472,17 @@ impl Scan {
         // will still be returned - we usually only need the last, which is what the next() and
         // next_back() methods need to handle. We also don't decode the value, since we only need
         // to decode the last version.
+        // 我们首先过滤掉不可见的版本
+        // 这里的k-v会包含多个版本，我们需要的是最新的版本
         scan = Box::new(scan.filter_map(move |r| {
+
             r.and_then(|(k, v)| match Key::decode(&k)? {
                 Key::Record(_, version) if !snapshot.is_visible(version) => Ok(None),
                 Key::Record(key, _) => Ok(Some((key.into_owned(), v))),
                 k => Err(Error::Internal(format!("Expected Record, got {:?}", k))),
             })
             .transpose()
+
         }));
         Self { scan: scan.peekable(), next_back_seen: None }
     }
@@ -461,13 +491,18 @@ impl Scan {
     fn try_next(&mut self) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
         while let Some((key, value)) = self.scan.next().transpose()? {
             // Only return the item if it is the last version of the key.
+            // 只返回最后一个版本，先获取当前一个
+            // 然后peek下一个
             if match self.scan.peek() {
+                // 如果key不一样 说明没问题
                 Some(Ok((peek_key, _))) if *peek_key != key => true,
+                // 一样就下一位
                 Some(Ok(_)) => false,
                 Some(Err(err)) => return Err(err.clone()),
                 None => true,
             } {
                 // Only return non-deleted items.
+                // 只返回没有删除的item
                 if let Some(value) = deserialize(&value)? {
                     return Ok(Some((key, value)));
                 }
@@ -481,9 +516,11 @@ impl Scan {
         while let Some((key, value)) = self.scan.next_back().transpose()? {
             // Only return the last version of the key (so skip if seen).
             if match &self.next_back_seen {
+                // 如果之前没有就true
+                None => true,
+                // 如果之前的key不等于当前的key 也是true
                 Some(seen_key) if *seen_key != key => true,
                 Some(_) => false,
-                None => true,
             } {
                 self.next_back_seen = Some(key.clone());
                 // Only return non-deleted items.

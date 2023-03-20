@@ -50,6 +50,7 @@ pub enum Event {
         has_committed: bool,
     },
     /// Candidates solicit votes from all peers.
+    /// 候选者向所有人征集选票
     SolicitVote {
         // The index of the candidate's last stored log entry
         last_index: u64,
@@ -57,8 +58,10 @@ pub enum Event {
         last_term: u64,
     },
     /// Followers may grant votes to candidates.
+    /// 跟随者授予候选者投票
     GrantVote,
     /// Leaders replicate a set of log entries to followers.
+    /// 领导者复制一系列entry给跟随者
     ReplicateEntries {
         /// The index of the log entry immediately preceding the submitted commands.
         base_index: u64,

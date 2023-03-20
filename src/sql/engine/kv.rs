@@ -73,6 +73,7 @@ impl Transaction {
     }
 
     /// Loads an index entry
+    /// 拿到索引的entry
     fn index_load(&self, table: &str, column: &str, value: &Value) -> Result<HashSet<Value>> {
         Ok(self
             .txn
@@ -83,6 +84,7 @@ impl Transaction {
     }
 
     /// Saves an index entry.
+    /// 保存一个索引的entry
     fn index_save(
         &mut self,
         table: &str,
@@ -91,6 +93,7 @@ impl Transaction {
         index: HashSet<Value>,
     ) -> Result<()> {
         let key = Key::Index(table.into(), column.into(), Some(value.into())).encode();
+        // 判断是否为空
         if index.is_empty() {
             self.txn.delete(&key)
         } else {
@@ -118,6 +121,7 @@ impl super::Transaction for Transaction {
 
     fn create(&mut self, table: &str, row: Row) -> Result<()> {
         let table = self.must_read_table(table)?;
+        // 校验
         table.validate_row(&row, self)?;
         let id = table.get_row_key(&row)?;
         if self.read(&table.name, &id)?.is_some() {
@@ -127,13 +131,17 @@ impl super::Transaction for Transaction {
             )));
         }
         self.txn.set(
+            // 插入 table+index为key,放入树中
             &Key::Row(Cow::Borrowed(&table.name), Some(Cow::Borrowed(&id))).encode(),
             serialize(&row)?,
         )?;
 
         // Update indexes
         for (i, column) in table.columns.iter().enumerate().filter(|(_, c)| c.index) {
+            // key是 table_column.name + row_value
+            // 对应树中存储的是一个set集合
             let mut index = self.index_load(&table.name, &column.name, &row[i])?;
+            // 插入这个主键到 set 非聚簇索引
             index.insert(id.clone());
             self.index_save(&table.name, &column.name, &row[i], index)?;
         }
@@ -142,6 +150,7 @@ impl super::Transaction for Transaction {
 
     fn delete(&mut self, table: &str, id: &Value) -> Result<()> {
         let table = self.must_read_table(table)?;
+        // 判断是否有外键
         for (t, cs) in self.table_references(&table.name, true)? {
             let t = self.must_read_table(&t)?;
             let cs = cs
@@ -160,8 +169,9 @@ impl super::Transaction for Transaction {
                 }
             }
         }
-
+         
         let indexes: Vec<_> = table.columns.iter().enumerate().filter(|(_, c)| c.index).collect();
+        //找到索引index的entry,然后把entry中对应的id删了
         if !indexes.is_empty() {
             if let Some(row) = self.read(&table.name, id)? {
                 for (i, column) in indexes {
@@ -171,6 +181,7 @@ impl super::Transaction for Transaction {
                 }
             }
         }
+        // 根据表+主键把真正的数据删除
         self.txn.delete(&Key::Row(table.name.into(), Some(id.into())).encode())
     }
 
@@ -181,6 +192,7 @@ impl super::Transaction for Transaction {
             .transpose()
     }
 
+    // 必须是index才可以
     fn read_index(&self, table: &str, column: &str, value: &Value) -> Result<HashSet<Value>> {
         if !self.must_read_table(table)?.get_column(column)?.index {
             return Err(Error::Value(format!("No index on {}.{}", table, column)));
@@ -320,6 +332,9 @@ enum Key<'a> {
 
 impl<'a> Key<'a> {
     /// Encodes the key as a byte vector
+    /// 0x01 -> table
+    /// 0x02 -> index
+    /// 0x03 -> row
     fn encode(self) -> Vec<u8> {
         use kv::encoding::*;
         match self {

@@ -153,6 +153,7 @@ pub struct RoleNode<R> {
 
 impl<R> RoleNode<R> {
     /// Transforms the node into another role.
+    /// 把节点转成其他shenfen
     fn become_role<T>(self, role: T) -> Result<RoleNode<T>> {
         Ok(RoleNode {
             id: self.id,

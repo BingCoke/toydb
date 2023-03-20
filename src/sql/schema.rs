@@ -25,6 +25,7 @@ pub trait Catalog {
     }
 
     /// Returns all references to a table, as table,column pairs.
+    /// 返回table的外键
     fn table_references(&self, table: &str, with_self: bool) -> Result<Vec<(String, Vec<String>)>> {
         Ok(self
             .scan_tables()?
@@ -116,7 +117,9 @@ impl Table {
         if row.len() != self.columns.len() {
             return Err(Error::Value(format!("Invalid row size for table {}", self.name)));
         }
+        // 得到row 主键
         let pk = self.get_row_key(row)?;
+
         for (column, value) in self.columns.iter().zip(row.iter()) {
             column.validate_value(self, &pk, value, txn)?;
         }
@@ -243,6 +246,7 @@ impl Column {
         }?;
 
         // Validate outgoing references
+        // 校验外键
         if let Some(target) = &self.references {
             match value {
                 Value::Null => Ok(()),
@@ -257,17 +261,30 @@ impl Column {
         }
 
         // Validate uniqueness constraints
+        // 校验唯一值
+        // 如果不是主键的话，而且不是null
         if self.unique && !self.primary_key && value != &Value::Null {
             let index = table.get_column_index(&self.name)?;
-            let mut scan = txn.scan(&table.name, None)?;
-            while let Some(row) = scan.next().transpose()? {
-                if row.get(index).unwrap_or(&Value::Null) == value
-                    && &table.get_row_key(&row)? != pk
-                {
+            if self.index {
+                let entry = txn.read_index(&table.name, &self.name, value)?;
+                if !entry.is_empty() {
                     return Err(Error::Value(format!(
-                        "Unique value {} already exists for column {}",
+                        "Unique value {} already exists for index column {}",
                         value, self.name
                     )));
+                }
+            } else {
+                //得到这个字段是表中的第几个字段
+                let mut scan = txn.scan(&table.name, None)?;
+                while let Some(row) = scan.next().transpose()? {
+                    if row.get(index).unwrap_or(&Value::Null) == value
+                        && &table.get_row_key(&row)? != pk
+                    {
+                        return Err(Error::Value(format!(
+                            "Unique value {} already exists for column {}",
+                            value, self.name
+                        )));
+                    }
                 }
             }
         }

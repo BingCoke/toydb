@@ -312,9 +312,11 @@ impl Optimizer for JoinType {
                     left,
                     left_size,
                     right,
+                    // predicate只剩下一个eq连接了
                     predicate: Some(Expression::Equal(a, b)),
                     outer,
                 } => match (*a, *b) {
+                    // 并且是两个field
                     (Expression::Field(a, a_label), Expression::Field(b, b_label)) => {
                         let (left_field, right_field) = if a < left_size {
                             ((a, a_label), (b - left_size, b_label))

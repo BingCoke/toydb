@@ -316,6 +316,7 @@ impl<'a, C: Catalog> Planner<'a, C> {
             ast::FromItem::Join { left, right, r#type, predicate } => {
                 // Right outer joins are built as a left outer join with an additional projection
                 // to swap the resulting columns.
+                // 这里进行了调换
                 let (left, right) = match r#type {
                     ast::JoinType::Right => (right, left),
                     _ => (left, right),
@@ -330,15 +331,16 @@ impl<'a, C: Catalog> Planner<'a, C> {
                 };
 
                 let mut node = Node::NestedLoopJoin { left, left_size, right, predicate, outer };
+                // 320行调换了一次，这里调换回来，保证用户体验
                 if matches!(r#type, ast::JoinType::Right) {
                     let expressions = (left_size..scope.len())
                         .chain(0..left_size)
                         // 左右连接的时候没有列别名，直接传none
                         .map(|i| Ok((Expression::Field(i, scope.get_label(i)?), None)))
                         .collect::<Result<Vec<_>>>()?;
-                    // scope中的columns 按照expressions进行排列 把右边的移到前面去了
-                    // 当然这个方法是建立一个投影 只不过也能完成上面我们想要的效果
+                    // 重新构建scope里的field
                     scope.project(&expressions)?;
+                    // 构建投影
                     node = Node::Projection { source: Box::new(node), expressions }
                 }
                 node

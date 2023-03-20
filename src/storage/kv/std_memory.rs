@@ -46,7 +46,7 @@ impl Store for StdMemory {
                 .range(range)
                 .map(|(k, v)| Ok((k.clone(), v.clone())))
                 .collect::<Vec<_>>()
-                .into_iter(),
+                .into_iter()
         )
     }
 

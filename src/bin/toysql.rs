@@ -4,7 +4,6 @@
  */
 
 #![warn(clippy::all)]
-
 use clap::{app_from_crate, crate_authors, crate_description, crate_name, crate_version};
 use rustyline::validate::{ValidationContext, ValidationResult, Validator};
 use rustyline::{error::ReadlineError, Editor, Modifiers};
@@ -72,6 +71,60 @@ impl ToySQL {
                 .map(|home| std::path::Path::new(&home).join(".toysql.history")),
             show_headers: false,
         })
+    }
+
+    /// Prompts the user for input
+    fn prompt(&mut self) -> Result<Option<String>> {
+        let prompt = match self.client.txn() {
+            Some((id, Mode::ReadWrite)) => format!("toydb:{}> ", id),
+            Some((id, Mode::ReadOnly)) => format!("toydb:{}> ", id),
+            Some((_, Mode::Snapshot { version })) => format!("toydb@{}> ", version),
+            None => "toydb> ".into(),
+        };
+        match self.editor.readline(&prompt) {
+            Ok(input) => {
+                self.editor.add_history_entry(&input);
+                Ok(Some(input.trim().to_string()))
+            }
+            Err(ReadlineError::Eof) | Err(ReadlineError::Interrupted) => Ok(None),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    /// Runs the ToySQL REPL
+    async fn run(&mut self) -> Result<()> {
+        if let Some(path) = &self.history_path {
+            match self.editor.load_history(path) {
+                Ok(_) => {}
+                Err(ReadlineError::Io(ref err)) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err.into()),
+            };
+        }
+        self.editor.set_helper(Some(InputValidator));
+        // Make sure multiline pastes are interpreted as normal inputs.
+        self.editor.bind_sequence(
+            rustyline::KeyEvent(rustyline::KeyCode::BracketedPasteStart, Modifiers::NONE),
+            rustyline::Cmd::Noop,
+        );
+
+        let status = self.client.status().await?;
+        println!(
+            "Connected to toyDB node \"{}\". Enter !help for instructions.",
+            status.raft.server
+        );
+
+        while let Some(input) = self.prompt()? {
+            match self.execute(&input).await {
+                Ok(()) => {}
+                error @ Err(Error::Internal(_)) => return error,
+                Err(error) => println!("Error: {}", error.to_string()),
+            }
+        }
+
+        if let Some(path) = &self.history_path {
+            self.editor.save_history(path)?;
+        }
+        Ok(())
     }
 
     /// Executes a line of input
@@ -209,59 +262,6 @@ SQL txns:  {txns_active} active, {txns} total ({sql_storage} storage)
         Ok(())
     }
 
-    /// Prompts the user for input
-    fn prompt(&mut self) -> Result<Option<String>> {
-        let prompt = match self.client.txn() {
-            Some((id, Mode::ReadWrite)) => format!("toydb:{}> ", id),
-            Some((id, Mode::ReadOnly)) => format!("toydb:{}> ", id),
-            Some((_, Mode::Snapshot { version })) => format!("toydb@{}> ", version),
-            None => "toydb> ".into(),
-        };
-        match self.editor.readline(&prompt) {
-            Ok(input) => {
-                self.editor.add_history_entry(&input);
-                Ok(Some(input.trim().to_string()))
-            }
-            Err(ReadlineError::Eof) | Err(ReadlineError::Interrupted) => Ok(None),
-            Err(err) => Err(err.into()),
-        }
-    }
-
-    /// Runs the ToySQL REPL
-    async fn run(&mut self) -> Result<()> {
-        if let Some(path) = &self.history_path {
-            match self.editor.load_history(path) {
-                Ok(_) => {}
-                Err(ReadlineError::Io(ref err)) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => return Err(err.into()),
-            };
-        }
-        self.editor.set_helper(Some(InputValidator));
-        // Make sure multiline pastes are interpreted as normal inputs.
-        self.editor.bind_sequence(
-            rustyline::KeyEvent(rustyline::KeyCode::BracketedPasteStart, Modifiers::NONE),
-            rustyline::Cmd::Noop,
-        );
-
-        let status = self.client.status().await?;
-        println!(
-            "Connected to toyDB node \"{}\". Enter !help for instructions.",
-            status.raft.server
-        );
-
-        while let Some(input) = self.prompt()? {
-            match self.execute(&input).await {
-                Ok(()) => {}
-                error @ Err(Error::Internal(_)) => return error,
-                Err(error) => println!("Error: {}", error.to_string()),
-            }
-        }
-
-        if let Some(path) = &self.history_path {
-            self.editor.save_history(path)?;
-        }
-        Ok(())
-    }
 }
 
 /// A Rustyline helper for multiline editing. It parses input lines and determines if they make up a
@@ -269,6 +269,7 @@ SQL txns:  {txns_active} active, {txns} total ({sql_storage} storage)
 #[derive(Completer, Helper, Highlighter, Hinter)]
 struct InputValidator;
 
+// 检查是否合法
 impl Validator for InputValidator {
     fn validate(&self, ctx: &mut ValidationContext) -> rustyline::Result<ValidationResult> {
         let input = ctx.input();
@@ -288,6 +289,7 @@ impl Validator for InputValidator {
                 _ => {}
             }
         }
+        // 如果上面都没有返回就说明语句没有结束
         Ok(ValidationResult::Incomplete)
     }
 

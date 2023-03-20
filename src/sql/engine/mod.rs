@@ -55,6 +55,7 @@ pub trait Transaction: Catalog {
     /// Scans a table's rows
     fn scan(&self, table: &str, filter: Option<Expression>) -> Result<Scan>;
     /// Scans a column's index entries
+    /// 得到索引entry 就是set集合， 里面有对应的主键
     fn scan_index(&self, table: &str, column: &str) -> Result<IndexScan>;
     /// Updates a table row
     fn update(&mut self, table: &str, id: &Value, row: Row) -> Result<()>;

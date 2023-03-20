@@ -16,37 +16,49 @@ use std::ops::{Bound, RangeBounds};
 /// A log store. Entry indexes are 1-based, to match Raft semantics.
 pub trait Store: Display + Sync + Send {
     /// Appends a log entry, returning its index.
+    /// 追加一个日志，返回日志的索引
     fn append(&mut self, entry: Vec<u8>) -> Result<u64>;
 
     /// Commits log entries up to and including the given index, making them immutable.
+    /// 将日志提交到给定索引
     fn commit(&mut self, index: u64) -> Result<()>;
 
     /// Returns the committed index, if any.
+    /// 返回已经提交的最大索引
     fn committed(&self) -> u64;
 
     /// Fetches a log entry, if it exists.
+    /// 得到索引中的entry, 如果存在的话
     fn get(&self, index: u64) -> Result<Option<Vec<u8>>>;
 
     /// Returns the number of entries in the log.
+    /// 返回日志大小
     fn len(&self) -> u64;
 
     /// Scans the log between the given indexes.
+    /// 返回范围内日志entry
     fn scan(&self, range: Range) -> Scan;
 
     /// Returns the size of the log, in bytes.
+    /// 返回日志大小
     fn size(&self) -> u64;
 
     /// Truncates the log be removing any entries above the given index, and returns the
     /// highest index. Errors if asked to truncate any committed entries.
+    /// 截断日志，删除高于这个index的日志条目，
+    /// 如果尝试删除已经提交的条目 会返回错误
     fn truncate(&mut self, index: u64) -> Result<u64>;
 
     /// Gets a metadata value.
+    /// 获得元数据
     fn get_metadata(&self, key: &[u8]) -> Result<Option<Vec<u8>>>;
 
     /// Sets a metadata value.
+    /// 设置元数据
     fn set_metadata(&mut self, key: &[u8], value: Vec<u8>) -> Result<()>;
 
     /// Returns true if the log has no entries.
+    /// 是否为空
     fn is_empty(&self) -> bool {
         self.len() == 0
     }

@@ -46,9 +46,12 @@ pub trait Transaction: Catalog {
     /// Deletes a table row
     fn delete(&mut self, table: &str, id: &Value) -> Result<()>;
     /// Reads a table row, if it exists
+    /// 通过主键返回一个row
     fn read(&self, table: &str, id: &Value) -> Result<Option<Row>>;
     /// Reads an index entry, if it exists
+    /// PROBLEM: 得到column=value的行主键？我认为会得到一个行主键，还没看到这么深
     fn read_index(&self, table: &str, column: &str, value: &Value) -> Result<HashSet<Value>>;
+
     /// Scans a table's rows
     fn scan(&self, table: &str, filter: Option<Expression>) -> Result<Scan>;
     /// Scans a column's index entries

@@ -42,6 +42,12 @@ pub enum Expression {
 
 impl Expression {
     /// Evaluates an expression to a value, given an environment
+    /// row 是在搜索之后得到row结果之后进行的。比如 
+    /// select * from ... name = 'xiaoming'
+    /// 当我扫描表得到一行数据之后 会有 name:'someone name' 
+    /// old expressions  equal(fild,'xiaoming');
+    /// new expressions equal('someone name','xiaoming')
+    /// 这个时候就可以进行替换了,上层调用的时候就可以判段是否为真
     pub fn evaluate(&self, row: Option<&Row>) -> Result<Value> {
         use Value::*;
         Ok(match self {
@@ -385,6 +391,7 @@ impl Expression {
     }
 
     /// Converts the expression into conjunctive normal form as a vector.
+    /// 把and都分开放进stack中
     pub fn into_cnf_vec(self) -> Vec<Self> {
         let mut cnf = Vec::new();
         let mut stack = vec![self.into_cnf()];
@@ -468,6 +475,7 @@ impl Expression {
 
     // Checks if the expression is a field lookup, and returns the list of values looked up.
     // Expressions must be a combination of =, IS NULL, OR to be converted.
+    // 把fild(index) 等于常量或者isnull的揪出来
     pub fn as_lookup(&self, field: usize) -> Option<Vec<Value>> {
         use Expression::*;
         // FIXME This should use a single match level, but since the child expressions are boxed

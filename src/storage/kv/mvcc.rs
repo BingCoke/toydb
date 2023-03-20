@@ -320,6 +320,8 @@ impl Mode {
     }
 
     /// Checks whether a mode satisfies a mode (i.e. ReadWrite satisfies ReadOnly).
+    /// 一个模式是否能够满足另一个模式，比如readwrite可以满足readonly and readwrite
+    /// snapshot 可以满足 readOnly 但是其他就不能互相满足了
     pub fn satisfies(&self, other: &Mode) -> bool {
         match (self, other) {
             (Mode::ReadWrite, Mode::ReadOnly) => true,

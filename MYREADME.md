@@ -11,3 +11,6 @@
 
 # BUG
 - planner.rs 695行数据似乎有bug 有前缀限定列名会出现问题
+
+# feature
+- 但主键索引

@@ -11,6 +11,7 @@ pub struct Scan {
     filter: Option<Expression>,
 }
 
+
 impl Scan {
     pub fn new(table: String, filter: Option<Expression>) -> Box<Self> {
         Box::new(Self { table, filter })
@@ -28,6 +29,7 @@ impl<T: Transaction> Executor<T> for Scan {
 }
 
 /// A primary key lookup executor
+/// 这里只是进行等值判断，不是等值会在后面进行
 pub struct KeyLookup {
     table: String,
     keys: Vec<Value>,
@@ -105,7 +107,8 @@ impl<T: Transaction> Executor<T> for Nothing {
     fn execute(self: Box<Self>, _: &mut T) -> Result<ResultSet> {
         Ok(ResultSet::Query {
             columns: Vec::new(),
-            rows: Box::new(std::iter::once(Ok(Row::new()))),
+            //rows: Box::new(std::iter::once(Ok(Row::new()))),
+            rows : Box::new(vec![Ok(Row::new())].into_iter())
         })
     }
 }

@@ -154,6 +154,10 @@ impl<'a, C: Catalog> Planner<'a, C> {
 
                 // Build SELECT clause.
                 let mut hidden = 0;
+
+                if select.is_empty() && !group_by.is_empty() {
+                   return  Err(Error::Value("is not support for use 'select *' and 'group_by' at same time".into()));
+                }
                 if !select.is_empty() {
                     // 映射隐藏column 有些column在having,orderby出现，但是没有出现于selec columns
                     // 就会先加入到select数组中 并且需要知道hiden几个
@@ -183,9 +187,9 @@ impl<'a, C: Catalog> Planner<'a, C> {
                     // - Projection: rating * 100, rating * 100, released - 2000
                     // - Aggregation: max(#0), min(#1) group by #2
                     // - Projection: (#0 - #1) / 100
-                    let aggregates = self.extract_aggregates(&mut select)?;
                     // 出来之后select中column都是被function替换的
                     // function(column(index))都已经进入aggregates
+                    let aggregates = self.extract_aggregates(&mut select)?;
                     let groups = self.extract_groups(&mut select, group_by, aggregates.len())?;
 
                     if !aggregates.is_empty() || !groups.is_empty() {
@@ -260,7 +264,7 @@ impl<'a, C: Catalog> Planner<'a, C> {
                             .collect(),
                     }
                 }
-
+                println!("{}", node);
                 node
             }
         })
@@ -361,7 +365,8 @@ impl<'a, C: Catalog> Planner<'a, C> {
         for (expr, label) in groups {
             expressions.push((self.build_expression(scope, expr)?, label));
         }
-        // 做出映射，只有groupby做投影，聚合操作不管
+        // 设置scope
+        // 之后的select只能查gourby的，或者聚合的函数
         scope.project(
             &expressions
                 .iter()
@@ -378,6 +383,7 @@ impl<'a, C: Catalog> Planner<'a, C> {
                 })
                 .collect::<Vec<_>>(),
         )?;
+        println!("expressions={:?}", expressions);
         let node = Node::Aggregation {
             source: Box::new(Node::Projection { source: Box::new(source), expressions }),
             aggregates,
@@ -439,7 +445,7 @@ impl<'a, C: Catalog> Planner<'a, C> {
         // 看一下group_by 的字段 有没有可以利用select的
         for g in group_by {
             // Look for references to SELECT columns with AS labels
-            // 看看字段
+            // 看看是否是字段
             if let ast::Expression::Field(None, label) = &g {
                 if let Some(i) = exprs.iter().position(|(_, l)| l.as_deref() == Some(label)) {
                     groups.push((
@@ -449,6 +455,7 @@ impl<'a, C: Catalog> Planner<'a, C> {
                     continue;
                 }
             }
+            // 如果不是字段
             // 看看有没有表达式一样的 例如
             // SELECT released / 100, COUNT(*) FROM movies GROUP BY released / 100
             // Look for expressions exactly equal to the group expression
@@ -587,6 +594,7 @@ impl<'a, C: Catalog> Planner<'a, C> {
                 ast::Literal::String(s) => Value::String(s),
             }),
             ast::Expression::Column(i) => Field(i, scope.get_label(i)?),
+            // 如果是filed会记录fild在scope中的索引位置
             ast::Expression::Field(table, name) => {
                 Field(scope.resolve(table.as_deref(), &name)?, Some((table, name)))
             }

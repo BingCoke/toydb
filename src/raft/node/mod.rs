@@ -144,6 +144,7 @@ pub struct RoleNode<R> {
     node_tx: mpsc::UnboundedSender<Message>,
     state_tx: mpsc::UnboundedSender<Instruction>,
     /// Keeps track of queued client requests received e.g. during elections.
+    /// 记录在选举的时候的请求，这些请求只能在选举结束后处理
     queued_reqs: Vec<(Address, Event)>,
     /// Keeps track of proxied client requests, to abort on new leader election.
     proxied_reqs: HashMap<Vec<u8>, Address>,

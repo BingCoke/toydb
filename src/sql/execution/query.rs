@@ -61,6 +61,7 @@ impl<T: Transaction> Executor<T> for Projection<T> {
         if let ResultSet::Query { columns, rows } = self.source.execute(txn)? {
             let (expressions, labels): (Vec<Expression>, Vec<Option<String>>) =
                 self.expressions.into_iter().unzip();
+            // 设置一下column 的label 没有就看看是不是filed 改成filed名字
             let columns = expressions
                 .iter()
                 .enumerate()

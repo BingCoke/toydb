@@ -19,24 +19,30 @@ impl Insert {
     }
 
     // Builds a row from a set of column names and values, padding it with default values.
+    // 把剩余的填入default或者null
     pub fn make_row(table: &Table, columns: &[String], values: Vec<Value>) -> Result<Row> {
         if columns.len() != values.len() {
             return Err(Error::Value("Column and value counts do not match".into()));
         }
         let mut inputs = HashMap::new();
+        // 检查是否有重复的
         for (c, v) in columns.iter().zip(values.into_iter()) {
             table.get_column(c)?;
+            // 并且做一个kv映射表
             if inputs.insert(c.clone(), v).is_some() {
                 return Err(Error::Value(format!("Column {} given multiple times", c)));
             }
         }
         let mut row = Row::new();
         for column in table.columns.iter() {
+            // 如果能在刚刚的映射表中找到，说明是用户自己插入的值
             if let Some(value) = inputs.get(&column.name) {
                 row.push(value.clone())
+            // 否则是默认值
             } else if let Some(value) = &column.default {
                 row.push(value.clone())
             } else {
+            // 没有默认值报错
                 return Err(Error::Value(format!("No value given for column {}", column.name)));
             }
         }
@@ -44,10 +50,14 @@ impl Insert {
     }
 
     /// Pads a row with default values where possible.
+    ///
     fn pad_row(table: &Table, mut row: Row) -> Result<Row> {
         for column in table.columns.iter().skip(row.len()) {
+            // 如果没有default就说明你需要进行自己处理
             if let Some(default) = &column.default {
                 row.push(default.clone())
+            } else if !&column.nullable {
+                return Err(Error::Value(format!("Not nullable value for column {}", column.name)));
             } else {
                 return Err(Error::Value(format!("No default value for column {}", column.name)));
             }
@@ -64,6 +74,7 @@ impl<T: Transaction> Executor<T> for Insert {
             let mut row =
                 expressions.into_iter().map(|expr| expr.evaluate(None)).collect::<Result<_>>()?;
             if self.columns.is_empty() {
+                // 如果columns是空的，就尝试把剩余的插入default
                 row = Self::pad_row(&table, row)?;
             } else {
                 row = Self::make_row(&table, &self.columns, row)?;

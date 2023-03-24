@@ -137,6 +137,7 @@ impl Server {
     }
 
     /// Receives inbound messages from a peer via TCP.
+    /// 通过tcp获取到节点的入站消息
     async fn tcp_receive_peer(
         socket: TcpStream,
         in_tx: mpsc::UnboundedSender<Message>,
@@ -152,6 +153,8 @@ impl Server {
     }
 
     /// Sends outbound messages to peers via TCP.
+    /// 发送出站消息给节点们 
+    /// 这里是消息的分发中心,不做真正的分发，会开启一个新的异步任务获取msg并发送
     async fn tcp_send(
         node_id: String,
         peers: HashMap<String, String>,
@@ -163,6 +166,7 @@ impl Server {
         for (id, addr) in peers.into_iter() {
             let (tx, rx) = mpsc::channel::<Message>(1000);
             peer_txs.insert(id, tx);
+            // 这里创建了任务去异步处理消息
             tokio::spawn(Self::tcp_send_peer(addr, rx));
         }
 
@@ -195,6 +199,8 @@ impl Server {
     }
 
     /// Sends outbound messages to a peer, continuously reconnecting.
+    /// 发送出站消息给节点，不断的重连
+    /// 这里主要是建立连接
     async fn tcp_send_peer(addr: String, out_rx: mpsc::Receiver<Message>) {
         let mut out_rx = ReceiverStream::new(out_rx);
         loop {
@@ -208,12 +214,14 @@ impl Server {
                 }
                 Err(err) => error!("Failed connecting to Raft peer {}: {}", addr, err),
             }
+            // 一段时间后尝试重连
             tokio::time::sleep(Duration::from_millis(1000)).await;
         }
         debug!("Disconnected from Raft peer {}", addr);
     }
 
     /// Sends outbound messages to a peer via a TCP session.
+    /// 通过tcp session 发送出站消息给节点
     async fn tcp_send_peer_session(
         socket: TcpStream,
         out_rx: &mut ReceiverStream<Message>,

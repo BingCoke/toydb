@@ -9,12 +9,14 @@ use rand::Rng as _;
 #[derive(Debug)]
 pub struct Follower {
     /// The leader, or None if just initialized.
+    /// leader 初始化的时候没有
     leader: Option<String>,
     /// The number of ticks since the last message from the leader.
     leader_seen_ticks: u64,
     /// The timeout before triggering an election.
     leader_seen_timeout: u64,
     /// The node we voted for in the current term, if any.
+    /// 给谁投了票
     voted_for: Option<String>,
 }
 
@@ -38,6 +40,8 @@ impl RoleNode<Follower> {
         let mut node = self.become_role(Candidate::new())?;
         node.term += 1;
         node.log.save_term(node.term, None)?;
+        // 发送的时候任期，event存储的是自己存储日志的最新任期, 不是本身
+        // 但是send中包装的时候 是自己本身的term
         node.send(
             Address::Peers,
             Event::SolicitVote { last_index: node.log.last_index, last_term: node.log.last_term },
@@ -57,6 +61,7 @@ impl RoleNode<Follower> {
             voted_for = self.role.voted_for;
         };
         self.role = Follower::new(Some(leader), voted_for.as_deref());
+        // 终止代理请求
         self.abort_proxied()?;
         self.forward_queued(Address::Peer(leader.to_string()))?;
         Ok(self)
@@ -74,7 +79,9 @@ impl RoleNode<Follower> {
             return Ok(self.into());
         }
         if let Address::Peer(from) = &msg.from {
+            // 如果它的任期大于我， 或者我目前没有leader
             if msg.term > self.term || self.role.leader.is_none() {
+                // 就将自己装换为这个msg发送者的follower
                 return self.become_follower(from, msg.term)?.step(msg);
             }
         }

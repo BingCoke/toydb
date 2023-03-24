@@ -36,6 +36,7 @@ pub struct Status {
 }
 
 /// The local Raft node state machine.
+/// 这种设计有点像抽象类，父类有自己定义的方法，子类需要实现部分方法
 pub enum Node {
     Candidate(RoleNode<Candidate>),
     Follower(RoleNode<Follower>),
@@ -44,6 +45,7 @@ pub enum Node {
 
 impl Node {
     /// Creates a new Raft node, starting as a follower, or leader if no peers.
+    /// 初始的时候创建raftnode, 如果peers没有，那就是leader， 否则就是 follower
     pub async fn new(
         id: &str,
         peers: Vec<String>,
@@ -52,6 +54,7 @@ impl Node {
         node_tx: mpsc::UnboundedSender<Message>,
     ) -> Result<Self> {
         let applied_index = state.applied_index();
+        // 已经应用的日志索引应该小于等于节点提交的日志索引
         if applied_index > log.commit_index {
             return Err(Error::Internal(format!(
                 "State machine applied index {} greater than log committed index {}",
@@ -61,12 +64,14 @@ impl Node {
 
         let (state_tx, state_rx) = mpsc::unbounded_channel();
         let mut driver = Driver::new(state_rx, node_tx.clone());
+        // 如果derive中应用的日志小于节点commit的日志就重放
         if log.commit_index > applied_index {
             info!("Replaying log entries {} to {}", applied_index + 1, log.commit_index);
             driver.replay(&mut *state, log.scan((applied_index + 1)..=log.commit_index))?;
         };
         tokio::spawn(driver.drive(state));
 
+        // 从本地文件中找到自己的任期和投给谁了
         let (term, voted_for) = log.load_term()?;
         let node = RoleNode {
             id: id.to_owned(),
@@ -89,6 +94,7 @@ impl Node {
     }
 
     /// Returns the node ID.
+    /// 返回id
     pub fn id(&self) -> String {
         match self {
             Node::Candidate(n) => n.id.clone(),
@@ -98,6 +104,7 @@ impl Node {
     }
 
     /// Processes a message.
+    /// 处理一个消息
     pub fn step(self, msg: Message) -> Result<Self> {
         debug!("Stepping {:?}", msg);
         match self {
@@ -136,10 +143,13 @@ impl From<RoleNode<Leader>> for Node {
 }
 
 // A Raft node with role R
+// 公共数据
 pub struct RoleNode<R> {
     id: String,
     peers: Vec<String>,
+    // 当前的term
     term: u64,
+    // 存储日志
     log: Log,
     node_tx: mpsc::UnboundedSender<Message>,
     state_tx: mpsc::UnboundedSender<Instruction>,
@@ -147,13 +157,14 @@ pub struct RoleNode<R> {
     /// 记录在选举的时候的请求，这些请求只能在选举结束后处理
     queued_reqs: Vec<(Address, Event)>,
     /// Keeps track of proxied client requests, to abort on new leader election.
+    /// 保持跟踪代理客户端请求，以终止新的领导选举
     proxied_reqs: HashMap<Vec<u8>, Address>,
     role: R,
 }
 
 impl<R> RoleNode<R> {
     /// Transforms the node into another role.
-    /// 把节点转成其他shenfen
+    /// 把节点转成其他身份
     fn become_role<T>(self, role: T) -> Result<RoleNode<T>> {
         Ok(RoleNode {
             id: self.id,
@@ -169,6 +180,7 @@ impl<R> RoleNode<R> {
     }
 
     /// Aborts any proxied requests.
+    /// 终止所有代理请求 
     fn abort_proxied(&mut self) -> Result<()> {
         for (id, address) in std::mem::take(&mut self.proxied_reqs) {
             self.send(address, Event::ClientResponse { id, response: Err(Error::Abort) })?;

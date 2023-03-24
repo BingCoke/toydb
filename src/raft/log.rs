@@ -36,16 +36,22 @@ impl Key {
 pub type Scan<'a> = Box<dyn Iterator<Item = Result<Entry>> + 'a>;
 
 /// The replicated Raft log
+/// 复制的raft日志
+/// 声明 这里的term都是最新的日志term！ 不代表节点本身的term
 pub struct Log {
     /// The underlying log store.
     pub(super) store: Box<dyn log::Store>,
     /// The index of the last stored entry.
+    /// 最新的index
     pub(super) last_index: u64,
     /// The term of the last stored entry.
+    /// 最新的日志的term 
     pub(super) last_term: u64,
     /// The last entry known to be committed.
+    /// 最新的已经提交的日志索引
     pub(super) commit_index: u64,
     /// The term of the last committed entry.
+    /// 最新的已经提交的日志的任期
     pub(super) commit_term: u64,
 }
 
@@ -164,6 +170,7 @@ impl Log {
             .get_metadata(&Key::TermVote.encode())?
             .map(|v| Self::deserialize(&v))
             .transpose()?
+            // 如果找不到就搞一个默认值
             .unwrap_or((0, None));
         debug!("Loaded term {} and voted_for {:?} from log", term, voted_for);
         Ok((term, voted_for))

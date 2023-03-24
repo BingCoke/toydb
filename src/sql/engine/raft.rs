@@ -272,6 +272,7 @@ impl State {
     /// Creates a new Raft state maching using the given MVCC key/value store
     pub fn new(store: kv::MVCC) -> Result<Self> {
         let engine = super::KV::new(store);
+        // 通过获取sotre获取元数据
         let applied_index = engine
             .get_metadata(b"applied_index")?
             .map(|b| Raft::deserialize(&b))

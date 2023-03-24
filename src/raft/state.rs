@@ -8,15 +8,20 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_stream::StreamExt as _;
 
 /// A Raft-managed state machine.
+/// raft管理的状态机
 pub trait State: Send {
     /// Returns the last applied index from the state machine, used when initializing the driver.
+    /// 返回已经执行的索引位置
     fn applied_index(&self) -> u64;
 
     /// Mutates the state machine. If the state machine returns Error::Internal, the Raft node
     /// halts. For any other error, the state is applied and the error propagated to the caller.
+    /// 改变状态机， 如果状态机返回Error::Internal, 那么raft节点停止。
+    /// 其他错误，可以将应用状态和错误，传播给调用者
     fn mutate(&mut self, index: u64, command: Vec<u8>) -> Result<Vec<u8>>;
 
     /// Queries the state machine. All errors are propagated to the caller.
+    /// 查询状态机，所有错误都传播给调用者
     fn query(&self, command: Vec<u8>) -> Result<Vec<u8>>;
 }
 
@@ -53,13 +58,16 @@ pub struct Driver {
     node_tx: mpsc::UnboundedSender<Message>,
     applied_index: u64,
     /// Notify clients when their mutation is applied. <index, (client, id)>
+    /// 当客户端的修改被应用，通知他们
     notify: HashMap<u64, (Address, Vec<u8>)>,
     /// Execute client queries when they receive a quorum. <index, <id, query>>
+    /// 当收到规定人数同意之后，执行客户端的query请求
     queries: BTreeMap<u64, BTreeMap<Vec<u8>, Query>>,
 }
 
 impl Driver {
     /// Creates a new state machine driver.
+    /// 状态机驱动
     pub fn new(
         state_rx: mpsc::UnboundedReceiver<Instruction>,
         node_tx: mpsc::UnboundedSender<Message>,
@@ -104,6 +112,7 @@ impl Driver {
     pub async fn execute(&mut self, i: Instruction, state: &mut dyn State) -> Result<()> {
         debug!("Executing {:?}", i);
         match i {
+            // abort请求 一般是leader变成follower进行
             Instruction::Abort => {
                 self.notify_abort()?;
                 self.query_abort()?;
@@ -134,6 +143,7 @@ impl Driver {
             }
 
             Instruction::Query { id, address, command, index, term, quorum } => {
+                // index -> commit_index 已经提交的日志索引
                 self.queries.entry(index).or_default().insert(
                     id.clone(),
                     Query { id, term, address, command, quorum, votes: HashSet::new() },
@@ -157,6 +167,7 @@ impl Driver {
     }
 
     /// Aborts all pending notifications.
+    /// 拿出来所有进行的request(还没有commit的请求) 
     fn notify_abort(&mut self) -> Result<()> {
         for (_, (address, id)) in std::mem::take(&mut self.notify) {
             self.send(address, Event::ClientResponse { id, response: Err(Error::Abort) })?;
@@ -165,6 +176,7 @@ impl Driver {
     }
 
     /// Notifies a client about an applied log entry, if any.
+    /// 通知客户端应用了一个日志
     fn notify_applied(&mut self, index: u64, result: Result<Vec<u8>>) -> Result<()> {
         if let Some((to, id)) = self.notify.remove(&index) {
             self.send(to, Event::ClientResponse { id, response: result.map(Response::State) })?;
@@ -173,6 +185,7 @@ impl Driver {
     }
 
     /// Aborts all pending queries.
+    /// 进行中的query请求终止,并通知源node
     fn query_abort(&mut self) -> Result<()> {
         for (_, queries) in std::mem::take(&mut self.queries) {
             for (id, query) in queries {
@@ -186,6 +199,7 @@ impl Driver {
     }
 
     /// Executes any queries that are ready.
+    /// 执行准备好的查询请求
     fn query_execute(&mut self, state: &mut dyn State) -> Result<()> {
         for query in self.query_ready(self.applied_index) {
             debug!("Executing query {:?}", query.command);
@@ -239,6 +253,7 @@ impl Driver {
     }
 
     /// Sends a message.
+    /// 发送一个msg
     fn send(&self, to: Address, event: Event) -> Result<()> {
         let msg = Message { from: Address::Local, to, term: 0, event };
         debug!("Sending {:?}", msg);

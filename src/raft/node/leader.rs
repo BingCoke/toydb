@@ -11,8 +11,11 @@ pub struct Leader {
     /// Number of ticks since last heartbeat.
     heartbeat_ticks: u64,
     /// The next index to replicate to a peer.
+    /// 每个机子占据一个元素，元素的值是下一个发往该机器的日志索引
+    /// 出现不一致的情况下，会索引位置减1，并多次重试
     peer_next_index: HashMap<String, u64>,
     /// The last index known to be replicated on a peer.
+    /// 了解到每台机器复制的最新的位置
     peer_last_index: HashMap<String, u64>,
 }
 
@@ -24,6 +27,8 @@ impl Leader {
             peer_next_index: HashMap::new(),
             peer_last_index: HashMap::new(),
         };
+        // 设置每个机器下一次需要发送的日志
+        // 不知道下一个，所以暂时为0
         for peer in peers {
             leader.peer_next_index.insert(peer.clone(), last_index + 1);
             leader.peer_last_index.insert(peer.clone(), 0);
@@ -53,10 +58,13 @@ impl RoleNode<Leader> {
 
     /// Commits any pending log entries.
     fn commit(&mut self) -> Result<u64> {
+        //找到当前所有节点复制的位置
         let mut last_indexes = vec![self.log.last_index];
         last_indexes.extend(self.role.peer_last_index.values());
         last_indexes.sort_unstable();
+        // 倒排
         last_indexes.reverse();
+        // 得到大多数节点复制位置的最大值
         let quorum_index = last_indexes[self.quorum() as usize - 1];
 
         // We can only safely commit up to an entry from our own term, see figure 8 in Raft paper.
@@ -134,6 +142,7 @@ impl RoleNode<Leader> {
             }
 
             Event::RejectEntries => {
+                // 如果拒绝了，就说明日志不一致，让index减1再尝试复制
                 if let Address::Peer(from) = msg.from {
                     self.role.peer_next_index.entry(from.clone()).and_modify(|i| {
                         if *i > 1 {
@@ -170,8 +179,10 @@ impl RoleNode<Leader> {
             }
 
             Event::ClientRequest { id, request: Request::Mutate(command) } => {
+                // 将日志存储，并将其复制到其他节点中
                 let index = self.append(Some(command))?;
                 self.state_tx.send(Instruction::Notify { id, address: msg.from, index })?;
+                // 如果没有其他人了就commit
                 if self.peers.is_empty() {
                     self.commit()?;
                 }

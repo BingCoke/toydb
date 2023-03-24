@@ -13,6 +13,7 @@ pub struct Candidate {
     /// Election timeout, in ticks.
     election_timeout: u64,
     /// Votes received (including ourself).
+    /// 包括自己，获得了多少选票
     votes: u64,
 }
 
@@ -84,6 +85,7 @@ impl RoleNode<Candidate> {
                     let queued = std::mem::take(&mut self.queued_reqs);
                     let mut node: Node = self.become_leader()?.into();
                     for (from, event) in queued {
+                        // 候选者会将选举期间收到的请求执行
                         node = node.step(Message { from, to: Address::Local, term: 0, event })?;
                     }
                     return Ok(node);

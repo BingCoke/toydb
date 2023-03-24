@@ -20,6 +20,7 @@ pub enum Address {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     /// The current term of the sender.
+    /// 在这里表明发送者的term
     pub term: u64,
     /// The sender address.
     pub from: Address,
@@ -33,6 +34,7 @@ pub struct Message {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Event {
     /// Leaders send periodic heartbeats to its followers.
+    /// 心跳的时候确定commit_index term
     Heartbeat {
         /// The index of the leader's last committed log entry.
         commit_index: u64,
@@ -49,6 +51,7 @@ pub enum Event {
         /// and would like the leader to replicate it.
         has_committed: bool,
     },
+
     /// Candidates solicit votes from all peers.
     /// 候选者向所有人征集选票
     SolicitVote {

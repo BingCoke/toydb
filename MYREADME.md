@@ -9,8 +9,9 @@
 
 
 
+
 # BUG
 - group_by sleect * 同时出现不会报错
 - 字段名重复没有判断
 # feature
-- 但主键索引
+- 单主键索引

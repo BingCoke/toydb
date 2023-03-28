@@ -405,14 +405,14 @@ impl<'a> Parser<'a> {
             while let Some(jointype) = self.parse_clause_from_jointype()? {
                 let left = Box::new(item);
 
-                // 解析出来下一个table 
+                // 解析出来下一个table
                 let right = Box::new(self.parse_clause_from_item()?);
 
                 let predicate = match &jointype {
                     // 只有cross 笛卡尔积没有on
                     ast::JoinType::Cross => None,
                     _ => {
-                        // 如果木有on字段就返回None 
+                        // 如果木有on字段就返回None
                         let _ = self.next_expect(Some(Keyword::On.into()))?;
                         // 如果有 就继续解析表达式
                         Some(self.parse_expression(0)?)
@@ -450,7 +450,7 @@ impl<'a> Parser<'a> {
         Ok(ast::FromItem::Table { name, alias })
     }
 
-    // 判断是否连接 inner join left join right join cross（笛卡尔积） 
+    // 判断是否连接 inner join left join right join cross（笛卡尔积）
     // Parses a from clause join type
     fn parse_clause_from_jointype(&mut self) -> Result<Option<ast::JoinType>> {
         if self.next_if_token(Keyword::Cross.into()).is_some() {
@@ -493,7 +493,7 @@ impl<'a> Parser<'a> {
         Ok(exprs)
     }
 
-    /// Parses a HAVING clause 
+    /// Parses a HAVING clause
     // 解析having 用group_by 的时候
     fn parse_clause_having(&mut self) -> Result<Option<ast::Expression>> {
         if self.next_if_token(Keyword::Having.into()).is_none() {
@@ -502,7 +502,7 @@ impl<'a> Parser<'a> {
         Ok(Some(self.parse_expression(0)?))
     }
 
-    // 解析 order 
+    // 解析 order
     /// Parses an order clause
     fn parse_clause_order(&mut self) -> Result<Vec<(ast::Expression, ast::Order)>> {
         if self.next_if_token(Keyword::Order.into()).is_none() {
@@ -674,7 +674,6 @@ enum PrefixOperator {
     Not,
     Plus,
 }
-
 
 impl PrefixOperator {
     fn build(&self, rhs: ast::Expression) -> ast::Expression {

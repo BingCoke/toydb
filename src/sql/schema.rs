@@ -219,6 +219,7 @@ impl Column {
     }
 
     /// Validates a column value
+    /// 校验一个字段的值是否合法
     pub fn validate_value(
         &self,
         table: &Table,
@@ -262,10 +263,11 @@ impl Column {
 
         // Validate uniqueness constraints
         // 校验唯一值
-        // 如果不是主键的话，而且不是null
+        // 如果不是主键的话，而且不是null(主键在之后会校验)
         if self.unique && !self.primary_key && value != &Value::Null {
             let index = table.get_column_index(&self.name)?;
-            if self.index {
+            // 如果是index（索引）
+            /* if self.index {
                 let entry = txn.read_index(&table.name, &self.name, value)?;
                 if !entry.is_empty() {
                     return Err(Error::Value(format!(
@@ -273,7 +275,7 @@ impl Column {
                         value, self.name
                     )));
                 }
-            } else {
+            } else { */
                 //得到这个字段是表中的第几个字段
                 let mut scan = txn.scan(&table.name, None)?;
                 while let Some(row) = scan.next().transpose()? {
@@ -286,7 +288,7 @@ impl Column {
                         )));
                     }
                 }
-            }
+            // }
         }
 
         Ok(())

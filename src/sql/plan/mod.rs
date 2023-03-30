@@ -8,7 +8,7 @@ use super::execution::{Executor, ResultSet};
 use super::parser::ast;
 use super::schema::{Catalog, Table};
 use super::types::{Expression, Value};
-use crate::error::Result;
+use crate::error::{Result, Error};
 
 use serde_derive::{Deserialize, Serialize};
 use std::fmt::{self, Display};
@@ -439,6 +439,7 @@ pub enum Aggregate {
     Min,
     Sum,
 }
+
 
 impl Display for Aggregate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

@@ -5,6 +5,7 @@ use super::{Aggregate, Direction, Node, Plan};
 use crate::error::{Error, Result};
 
 use std::collections::{HashMap, HashSet};
+use std::fmt::format;
 use std::mem::replace;
 
 /// A query plan builder.
@@ -134,8 +135,7 @@ impl<'a, C: Catalog> Planner<'a, C> {
                 let scope = &mut Scope::new();
 
                 // Build FROM clause.
-                let mut node = 
-                    if !from.is_empty() {
+                let mut node = if !from.is_empty() {
                     self.build_from_clause(scope, from)?
                 } else if select.is_empty() {
                     return Err(Error::Value("Can't select * without a table".into()));
@@ -156,7 +156,9 @@ impl<'a, C: Catalog> Planner<'a, C> {
                 let mut hidden = 0;
 
                 if select.is_empty() && !group_by.is_empty() {
-                   return  Err(Error::Value("is not support for use 'select *' and 'group_by' at same time".into()));
+                    return Err(Error::Value(
+                        "is not support for use 'select *' and 'group_by' at same time".into(),
+                    ));
                 }
                 if !select.is_empty() {
                     // 映射隐藏column 有些column在having,orderby出现，但是没有出现于selec columns
@@ -166,10 +168,10 @@ impl<'a, C: Catalog> Planner<'a, C> {
                     // HAVING expressions but not present in existing SELECT output. These will be
                     // removed again by a later projection.
                     if let Some(ref mut expr) = having {
-                        hidden += self.inject_hidden(expr, &mut select)?;
+                        hidden += self.inject_hidden(expr, &mut select, true)?;
                     }
                     for (expr, _) in order.iter_mut() {
-                        hidden += self.inject_hidden(expr, &mut select)?;
+                        hidden += self.inject_hidden(expr, &mut select, false)?;
                     }
 
                     // Extract any aggregate functions and GROUP BY expressions, replacing them with
@@ -190,7 +192,9 @@ impl<'a, C: Catalog> Planner<'a, C> {
                     // 出来之后select中column都是被function替换的
                     // function(column(index))都已经进入aggregates
                     let aggregates = self.extract_aggregates(&mut select)?;
+
                     let groups = self.extract_groups(&mut select, group_by, aggregates.len())?;
+                    // let (_,labels) : (Vec<ast::Expression, Option<String>>) = groups.clone().into_iter().unzip();
 
                     if !aggregates.is_empty() || !groups.is_empty() {
                         // 聚合 或者 group 只要有一个就进入
@@ -274,7 +278,6 @@ impl<'a, C: Catalog> Planner<'a, C> {
     /// join of an arbitrary number of tables. All of the items are joined, since e.g. 'SELECT * FROM
     /// a, b' is an implicit join of a and b.
     fn build_from_clause(&self, scope: &mut Scope, from: Vec<ast::FromItem>) -> Result<Node> {
-        
         let base_scope = scope.clone();
         let mut items = from.into_iter();
         let mut node = match items.next() {
@@ -335,7 +338,7 @@ impl<'a, C: Catalog> Planner<'a, C> {
                 if matches!(r#type, ast::JoinType::Right) {
                     let expressions = (left_size..scope.len())
                         .chain(0..left_size)
-                        // 左右连接的时候没有列别名，直接传none
+                        // 左右连接的时候使用上层传来的就欧克了，直接传none
                         .map(|i| Ok((Expression::Field(i, scope.get_label(i)?), None)))
                         .collect::<Result<Vec<_>>>()?;
                     // 重新构建scope里的field
@@ -385,7 +388,7 @@ impl<'a, C: Catalog> Planner<'a, C> {
                 })
                 .collect::<Vec<_>>(),
         )?;
-        println!("expressions={:?}", expressions);
+
         let node = Node::Aggregation {
             source: Box::new(Node::Projection { source: Box::new(source), expressions }),
             aggregates,
@@ -408,7 +411,7 @@ impl<'a, C: Catalog> Planner<'a, C> {
                     ast::Expression::Function(f, args) if args.len() == 1 => {
                         // 查看是否有这个函数支持
                         if let Some(aggregate) = self.aggregate_from_name(f) {
-                            // 把function 替换 -> column(index) 
+                            // 把function 替换 -> column(index)
                             // 这里的index和刚刚inject_hidden不同，这里的index就指的是aggregates中的index
                             // 所有的function都会替换成Column(index)  包括刚刚inject_hidden中的
                             aggregates.push((aggregate, args.remove(0)));
@@ -496,12 +499,13 @@ impl<'a, C: Catalog> Planner<'a, C> {
         &self,
         expr: &mut ast::Expression,
         select: &mut Vec<(ast::Expression, Option<String>)>,
+        having: bool,
     ) -> Result<usize> {
         // Replace any identical expressions or label references with column references.
         for (i, (sexpr, label)) in select.iter().enumerate() {
-            // 如果一致，就把expr 改成对应select中的映射 
+            // 如果一致，就把expr 改成对应select中的映射
             // select name ... order name
-            // 这里就只需要expr记住你之后找第几个映射结果就好了 
+            // 这里就只需要expr记住你之后找第几个映射结果就好了
             if expr == sexpr {
                 *expr = ast::Expression::Column(i);
                 continue;
@@ -514,18 +518,45 @@ impl<'a, C: Catalog> Planner<'a, C> {
                         ast::Expression::Field(None, ref l) if l == label => {
                             Ok(ast::Expression::Column(i))
                         }
+                        ast::Expression::Function(_, _) => {
+                            if having {
+                                Ok(e)
+                            } else {
+                                Err(Error::Parse(format!("order cannot use function")))
+                            }
+                        }
                         e => Ok(e),
                     },
                     &mut |e| Ok(e),
                 )?;
             }
         }
+
+        expr.transform_mut(&mut |e| Ok(e), &mut |e| match e {
+            ast::Expression::Function(f, mut exs) => {
+                let mut ex = exs.pop().ok_or(Error::Abort)?;
+                ex.transform_mut(&mut |e| Ok(e), &mut |e| match e {
+                    ast::Expression::Column(i) => {
+                        let (r, _) = select.get(i).cloned().ok_or(Error::Abort)?;
+                        Ok(r)
+                    }
+                    _ => Ok(e),
+                })?;
+                exs.push(ex);
+                Ok(ast::Expression::Function(f, exs))
+            }
+            _ => Ok(e),
+        })?;
+
         // Any remaining aggregate functions and field references must be extracted as hidden
         // columns.
         let mut hidden = 0;
         expr.transform_mut(
             &mut |e| match &e {
                 // 如果是 function 那么还需要看一下是否存在
+                // 这里就是将function进行替换 假如这里是having max(age) < 18
+                // 这个max(age) 会被替换成 column(index) 然后在slelect中加入max(age)这个filter
+                //
                 ast::Expression::Function(f, a) if self.aggregate_from_name(f).is_some() => {
                     // 如果存在 并且参数是Column() 这里已经被上面递归替换掉了
                     // 这里只实现了基本的sum count .. 操作 只有一个传参 所以只判断一个就好了
@@ -545,9 +576,7 @@ impl<'a, C: Catalog> Planner<'a, C> {
                     hidden += 1;
                     Ok(ast::Expression::Column(select.len() - 1))
                 }
-                // 这里说一下 这里依然是递归替换 如果是function(fun_name,arg) 那么首先column会被替换掉
-                // 也就是说function(fun_name,arg) 首先会被替换成function(fun_name,Column(index))
-                // 之后才会进入上面的 function 中的替换
+
                 ast::Expression::Field(_, _) => {
                     // 如果是filed并且和select没有重合的地方，那么就加入到select中
                     select.push((e, None));
@@ -602,7 +631,7 @@ impl<'a, C: Catalog> Planner<'a, C> {
             }
             ast::Expression::Function(name, _) => {
                 // 这个地方不应该被调用，因为会在之前被替换成Column
-                return Err(Error::Value(format!("Unknown function {}", name,)))
+                return Err(Error::Value(format!("Unknown function {}", name,)));
             }
             ast::Expression::Operation(op) => match op {
                 // Logical operators
@@ -848,7 +877,6 @@ impl Scope {
                 .get(&(table.into(), name.into()))
                 .copied()
                 .ok_or_else(|| Error::Value(format!("Unknown field {}.{}", table, name)))
-
         } else if self.ambiguous.contains(name) {
             // 如果全限定列名找不到，并且这个列名在ambiguous中就有问题了
             Err(Error::Value(format!("Ambiguous field {}", name)))
@@ -878,16 +906,20 @@ impl Scope {
         for (expr, label) in projection {
             match (expr, label) {
                 (_, Some(label)) => new.add_column(None, Some(label.clone())),
-                (Expression::Field(_, Some((Some(table), name))), _) => {
-                    new.add_column(Some(table.clone()), Some(name.clone()))
-                }
-                (Expression::Field(_, Some((None, name))), _) => {
-                    if let Some(i) = self.unqualified.get(name) {
-                        let (table, name) = self.columns[*i].clone();
-                        new.add_column(table, name);
-                    }
-                }
-                (Expression::Field(i, None), _) => {
+                // (Expression::Field(_, Some((Some(table), name))), _) => {
+                //     new.add_column(Some(table.clone()), Some(name.clone()))
+                // }
+                // (Expression::Field(_, Some((None, name))), _) => {
+                //     if let Some(i) = self.unqualified.get(name) {
+                //         let (table, name) = self.columns[*i].clone();
+                //         new.add_column(table, name);
+                //     }
+                // }
+                // (Expression::Field(i, None), _) => {
+                //     let (table, label) = self.columns.get(*i).cloned().unwrap_or((None, None));
+                //     new.add_column(table, label)
+                // }
+                (Expression::Field(i, _), None) => {
                     let (table, label) = self.columns.get(*i).cloned().unwrap_or((None, None));
                     new.add_column(table, label)
                 }

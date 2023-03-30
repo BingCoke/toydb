@@ -98,7 +98,7 @@ pub enum Order {
 pub enum Expression {
     Field(Option<String>, String),
     Column(usize), // only used during plan building to break off expression subtrees //
-                   // 用于构建plan的时候中断表达式子树
+    // 用于构建plan的时候中断表达式子树
     Literal(Literal),
     Function(String, Vec<Expression>),
     Operation(Operation),
@@ -216,7 +216,6 @@ impl Expression {
                     Self::replace_with(expr, |e| e.transform(before, after))?;
                 }
             }
-
             Self::Literal(_) | Self::Field(_, _) | Self::Column(_) => {}
         };
         after(self)
@@ -228,7 +227,9 @@ impl Expression {
         B: FnMut(Self) -> Result<Self>,
         A: FnMut(Self) -> Result<Self>,
     {
-        self.replace_with(|e| e.transform(before, after))
+        let expr = replace(self, Expression::Literal(Literal::Null));
+        *self = expr.transform(before, after)?;
+        Ok(())
     }
 
     /// Walks the expression tree, calling a closure for every node. Halts if closure returns false.
@@ -271,5 +272,3 @@ impl Expression {
             }
     }
 }
-
-

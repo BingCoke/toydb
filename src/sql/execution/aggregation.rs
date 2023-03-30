@@ -3,6 +3,7 @@ use super::super::plan::Aggregate;
 use super::super::types::Value;
 use super::{Executor, ResultSet};
 use crate::error::{Error, Result};
+use crate::sql::types::Column;
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -23,7 +24,7 @@ impl<T: Transaction> Aggregation<T> {
 impl<T: Transaction> Executor<T> for Aggregation<T> {
     #[allow(clippy::or_fun_call)]
     fn execute(mut self: Box<Self>, txn: &mut T) -> Result<ResultSet> {
-        //let agg_count = self.aggregates.len();
+        let agg_count = self.aggregates.len();
         match self.source.execute(txn)? {
             ResultSet::Query { columns, mut rows } => {
                 while let Some(mut row) = rows.next().transpose()? {
@@ -52,13 +53,13 @@ impl<T: Transaction> Executor<T> for Aggregation<T> {
                     );
                 }
                 Ok(ResultSet::Query {
-                    columns,
-                    /* columns: columns
+                    // columns,
+                    columns: columns
                         .into_iter()
                         .enumerate()
                         // 聚合操作column是null, group_by保持原来的标签
                         .map(|(i, c)| if i < agg_count { Column { name: None } } else { c })
-                        .collect(), */
+                        .collect(),
                     rows: Box::new(self.accumulators.into_iter().map(|(bucket, accs)| {
                         Ok(accs
                             .into_iter()
